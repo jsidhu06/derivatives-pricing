@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  # Wait for CI to pass on this tag before publishing
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish to PyPI
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ensure release is tag-triggered
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "Release publishing must run from a git tag"
+            exit 1
+          fi
+
+      - name: Verify tag matches package version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              project = tomllib.load(f)["project"]
+
+          package_version = project["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          tag_version = tag[1:] if tag.startswith("v") else tag
+
+          if package_version != tag_version:
+              raise SystemExit(
+                  f"Version mismatch: pyproject.toml={package_version!r}, tag={tag!r}"
+              )
+
+          print(f"Version check passed: {package_version}")
+          PY
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Verify distributions
+        run: |
+          python -m twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
