@@ -45,7 +45,7 @@ from ..exceptions import (
     UnsupportedFeatureError,
     ValidationError,
 )
-from .contracts import PayoffBoundaryModel, WingAsymptote
+from .contracts import PayoffBoundaryModel, WingBoundary
 from .params import PDEParams
 
 if TYPE_CHECKING:
@@ -193,7 +193,7 @@ def _fit_affine_boundary_model(
     *,
     wing: str,
     spot_samples: np.ndarray,
-) -> WingAsymptote:
+) -> WingBoundary:
     """Fit affine boundary model ``payoff(S) ~ slope * S + intercept``.
 
     Parameters
@@ -209,7 +209,7 @@ def _fit_affine_boundary_model(
 
     Returns
     -------
-    WingAsymptote
+    WingBoundary
         Fitted slope / intercept pair.
     """
     if wing not in {"left", "right"}:
@@ -241,7 +241,7 @@ def _fit_affine_boundary_model(
                 r_squared,
             )
 
-    return WingAsymptote(slope=float(slope), intercept=float(intercept))
+    return WingBoundary(slope=float(slope), intercept=float(intercept))
 
 
 def _continuation_from_affine_boundary_model(
@@ -282,7 +282,7 @@ def _boundary_values(
 ) -> tuple[float, float]:
     """Dirichlet boundary values for PDE at S=smin (left) and S=smax (right).
 
-    For vanilla call/put, uses standard analytical asymptotics.
+    For vanilla call/put, uses standard analytical boundary conditions.
 
     For custom payoffs, uses affine wing boundary models::
 
@@ -291,7 +291,7 @@ def _boundary_values(
 
     For American exercise the boundary is
     ``max(continuation, intrinsic)`` where intrinsic is evaluated directly
-    via the payoff callable (not the asymptote).
+    via the payoff callable (not the boundary model).
     """
     # ------------------------------------------------------------------
     # Custom payoff branch

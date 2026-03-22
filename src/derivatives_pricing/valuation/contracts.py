@@ -77,13 +77,13 @@ class VanillaSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class WingAsymptote:
+class WingBoundary:
     """Affine boundary model on one wing: ``payoff(S) ~ slope * S + intercept``.
 
     The PDE engine uses this as an affine approximation at the truncated
-    computational boundary. On spot grids this will often coincide with the
-    true payoff asymptote; on log-spot grids it should be interpreted as a
-    local boundary model at the finite boundary.
+    computational boundary.  On spot grids this will often coincide with
+    the true payoff tail behaviour; on log-spot grids it should be
+    interpreted as a local boundary model at the finite boundary.
     """
 
     slope: float
@@ -103,8 +103,8 @@ class PayoffBoundaryModel:
     numerically from the payoff callable.
     """
 
-    left: WingAsymptote
-    right: WingAsymptote
+    left: WingBoundary
+    right: WingBoundary
 
 
 @dataclass(frozen=True, slots=True)

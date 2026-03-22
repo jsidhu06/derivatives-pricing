@@ -10,7 +10,7 @@ Scope:
 - Engine guardrails:
     - BSM rejects PayoffSpec (requires vanilla CALL/PUT)
 - PDE custom payoff pricing:
-    - Asymptote-based boundary conditions: inferred and explicit
+    - Affine boundary-model conditions: inferred and explicit
     - Cross-engine consistency (PDE vs binomial / MC)
 - Cross-checks against replication / cross-engine consistency where appropriate
 """
@@ -39,7 +39,7 @@ from derivatives_pricing.valuation import (
     OptionValuation,
     PayoffSpec,
     PayoffBoundaryModel,
-    WingAsymptote,
+    WingBoundary,
     PDEParams,
     UnderlyingData,
     VanillaSpec,
@@ -438,7 +438,7 @@ _BINOM_PARAMS = BinomialParams(num_steps=500)
 
 
 class TestPayoffSpecPDE:
-    """PDE finite-difference pricing with asymptote-based boundary conditions."""
+    """PDE finite-difference pricing with affine boundary-model conditions."""
 
     @pytest.mark.parametrize(
         "payoff_fn, label, exercise",
@@ -509,7 +509,7 @@ class TestPayoffSpecPDE:
         # Digital pays 1 max, so PV ≤ exp(-rT) * 1
         assert pv < 1.0
 
-    def test_pde_bull_spread_explicit_asymptotes(self):
+    def test_pde_bull_spread_explicit_boundary_model(self):
         """Explicit boundary model on PayoffSpec should give same result as fitted."""
         ud = _ud()
 
@@ -526,8 +526,8 @@ class TestPayoffSpecPDE:
             payoff_fn=_bull_call_spread,
             currency=CURRENCY,
             boundary_model=PayoffBoundaryModel(
-                left=WingAsymptote(slope=0.0, intercept=0.0),
-                right=WingAsymptote(slope=0.0, intercept=20.0),
+                left=WingBoundary(slope=0.0, intercept=0.0),
+                right=WingBoundary(slope=0.0, intercept=20.0),
             ),
         )
         pv_explicit = OptionValuation(
