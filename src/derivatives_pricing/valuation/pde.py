@@ -45,7 +45,7 @@ from ..exceptions import (
     UnsupportedFeatureError,
     ValidationError,
 )
-from .contracts import PayoffBoundaryModel, WingBoundary
+from .contracts import PayoffSpec, PayoffBoundaryModel, WingBoundary
 from .params import PDEParams
 
 if TYPE_CHECKING:
@@ -135,7 +135,7 @@ def _dividend_tau_schedule(
 
     The range is closed: ``0.0 <= tau <= ttm``.  Boundary values (tau=0 for
     maturity-date dividends, tau=ttm for pricing-date dividends) are included
-    so that ``_vanilla_fd_core`` can apply them as special-case jumps.
+    so that ``_fd_core`` can apply them as special-case jumps.
     """
     if not discrete_dividends:
         return []
@@ -282,12 +282,17 @@ def _boundary_values(
 ) -> tuple[float, float]:
     """Dirichlet boundary values for PDE at S=smin (left) and S=smax (right).
 
-    For vanilla call/put, uses standard analytical boundary conditions.
+    For vanilla call/put, uses standard analytical asymptotic boundary
+    conditions.
 
     For custom payoffs, uses affine wing boundary models::
 
         payoff(S) ~ slope * S + intercept
         => V(S, t) ~ slope * S * dq_tT + intercept * df_tT
+
+    For custom payoffs, the affine boundary wings are interpreted at the
+    actual finite grid boundaries ``smin`` and ``smax`` of the truncated PDE
+    domain rather than as true infinite-domain asymptotics.
 
     For American exercise the boundary is
     ``max(continuation, intrinsic)`` where intrinsic is evaluated directly
@@ -449,7 +454,7 @@ def _scaled_operator_coeffs(
 
 
 # ---------------------------------------------------------------------------
-# Time-step helpers (extracted from _vanilla_fd_core for readability)
+# Time-step helpers (extracted from _fd_core for readability)
 # ---------------------------------------------------------------------------
 
 
@@ -780,7 +785,7 @@ def _build_time_step_schedule(
     return steps
 
 
-def _vanilla_fd_core(
+def _fd_core(
     *,
     spot: float,
     strike: float | None,
@@ -1201,10 +1206,14 @@ class _FDValuationBase(_FDGridGreeksMixin):
 
         # Custom payoff support: extract payoff callable and boundary model from PayoffSpec
         spec = self.valuation_ctx.spec
-        custom_payoff = getattr(spec, "payoff", None) if strike is None else None
-        custom_boundary_model = getattr(spec, "boundary_model", None) if strike is None else None
+        if isinstance(spec, PayoffSpec):
+            custom_payoff = spec.payoff
+            custom_boundary_model = spec.boundary_model
+        else:
+            custom_payoff = None
+            custom_boundary_model = None
 
-        return _vanilla_fd_core(
+        return _fd_core(
             spot=spot,
             strike=float(strike) if strike is not None else None,
             time_to_maturity=float(time_to_maturity),
