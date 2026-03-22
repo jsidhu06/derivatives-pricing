@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import logging
 import math
 import datetime as dt
+import warnings
 
 import numpy as np
 
@@ -833,7 +834,9 @@ def _vanilla_fd_core(
         payoff_fn=payoff_fn,
     )
 
-    # For grid sizing, use strike when available, otherwise use spot
+    # For grid sizing, use strike when available, otherwise use spot.
+    # After the grid is built, normalize smin/smax to the ACTUAL grid
+    # boundaries so all downstream code uses a single consistent meaning.
     ref_price = max(spot, strike) if strike is not None else spot
     smax = float(smax_mult * ref_price)
     if space_grid is PDESpaceGrid.SPOT:
@@ -851,6 +854,9 @@ def _vanilla_fd_core(
             time_steps=time_steps,
         )
 
+    smin = float(S[0])
+    smax = float(S[-1])
+
     j = np.arange(1, spot_steps)  # interior indices 1..M-1
 
     # Terminal payoff at maturity
@@ -864,12 +870,20 @@ def _vanilla_fd_core(
     # Resolve affine wing boundary models once (used for boundary
     # conditions on every time step). Prefer explicit metadata; fall back
     # to a local affine fit on the actual PDE boundary nodes.
-    smin = float(S[0])
-    if payoff_fn is not None and payoff_boundary_model is None:
-        payoff_boundary_model = PayoffBoundaryModel(
-            left=_fit_affine_boundary_model(payoff_fn, wing="left", spot_samples=S[:4]),
-            right=_fit_affine_boundary_model(payoff_fn, wing="right", spot_samples=S[-4:]),
-        )
+    if payoff_fn is not None:
+        if payoff_boundary_model is None:
+            payoff_boundary_model = PayoffBoundaryModel(
+                left=_fit_affine_boundary_model(payoff_fn, wing="left", spot_samples=S[:4]),
+                right=_fit_affine_boundary_model(payoff_fn, wing="right", spot_samples=S[-4:]),
+            )
+        elif space_grid is PDESpaceGrid.LOG_SPOT:
+            warnings.warn(
+                "Explicit PayoffBoundaryModel with LOG_SPOT grid is interpreted as an affine "
+                "boundary model on the finite truncated PDE domain, not as a true payoff tail "
+                "asymptote. Ensure the supplied boundary model is appropriate at the actual grid "
+                "boundaries.",
+                stacklevel=2,
+            )
 
     V = payoff.copy()  # V at tau=0 (maturity)
     intrinsic = payoff if early_exercise else None
@@ -967,7 +981,7 @@ def _vanilla_fd_core(
             option_type=option_type,
             strike=strike,
             smin=smin,
-            smax=float(S[-1]),
+            smax=smax,
             df_tT=df_tT,
             dq_tT=dq_tT,
             early_exercise=early_exercise,
