@@ -138,6 +138,12 @@ examples/                     # API usage notebooks
 tutorials/                    # Theory deep-dive notebooks
 ```
 
+## Roadmap
+
+Planned: barrier options, stochastic volatility models.
+
+Found a bug or have a feature request? [Open an issue](https://github.com/jsidhu06/derivatives-pricing/issues).
+
 ## Disclaimer
 
 This pricing library is provided as-is. Users are responsible for
