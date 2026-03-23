@@ -326,8 +326,8 @@ class _AnalyticalAsianValuation:
                 "Analytical (BSM) Asian pricing requires GEOMETRIC or ARITHMETIC averaging."
             )
         if spec.fixing_dates is not None:
-            raise ValidationError(
-                "Analytical (BSM) Asian pricing does not support fixing_dates. "
+            raise UnsupportedFeatureError(
+                "Analytical (BSM) Asian pricing currently does not support fixing_dates. "
                 "Provide num_observations and use equally spaced observations."
             )
         if spec.num_observations is None:
