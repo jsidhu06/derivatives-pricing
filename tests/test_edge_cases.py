@@ -35,7 +35,7 @@ from derivatives_pricing.valuation import (
 )
 
 PRICING_DATE = dt.datetime(2025, 1, 1)
-MATURITY = dt.datetime(2025, 7, 1)  # ~0.5y
+MATURITY = dt.datetime(2025, 7, 3)  # ~0.5y
 RATE = 0.05
 _DEFAULT_RATE_CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)
 

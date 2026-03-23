@@ -19,6 +19,7 @@ from derivatives_pricing.enums import (
     PDESpaceGrid,
     PricingMethod,
 )
+from derivatives_pricing.valuation.contracts import PayoffSpec
 from helpers import (
     flat_curve,
     underlying,
@@ -149,3 +150,116 @@ class TestPDEGridTheta:
         theta_pde = pde.theta(greek_calc_method=GreekCalculationMethod.GRID)
 
         assert np.isclose(theta_pde, theta_bsm, rtol=0.02)
+
+
+##### CUSTOM PAYOFF TESTS #####
+
+
+def _bull_call_spread(S):
+    return np.maximum(S - 95.0, 0) - np.maximum(S - 115.0, 0)
+
+
+def _capped_strangle(S):
+    return np.minimum(40.0, np.maximum(90.0 - S, 0) + np.maximum(S - 110.0, 0))
+
+
+_CUSTOM_PAYOFFS = [
+    pytest.param(_bull_call_spread, id="bull_call_spread"),
+    pytest.param(_capped_strangle, id="capped_strangle"),
+]
+
+
+class TestPDECustomPayoffMethodEquivalence:
+    """PDE FD variants should agree for custom PayoffSpec payoffs."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.01)
+        self.ud = underlying(initial_value=100.0, dividend_curve=q_curve)
+
+    @pytest.mark.parametrize("payoff_fn", _CUSTOM_PAYOFFS)
+    def test_european(self, payoff_fn):
+        sp = PayoffSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            maturity=MATURITY,
+            payoff_fn=payoff_fn,
+        )
+        base_params = PDEParams(spot_steps=400, time_steps=400)
+        baseline = OptionValuation(
+            self.ud, sp, PricingMethod.PDE_FD, params=base_params
+        ).present_value()
+
+        for method in (
+            PDEMethod.IMPLICIT,
+            PDEMethod.EXPLICIT,
+            PDEMethod.EXPLICIT_HULL,
+            PDEMethod.CRANK_NICOLSON,
+        ):
+            for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
+                params = PDEParams(
+                    spot_steps=400,
+                    time_steps=400,
+                    method=method,
+                    space_grid=grid,
+                )
+
+                if (
+                    method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL)
+                    and grid is PDESpaceGrid.SPOT
+                ):
+                    with pytest.raises(
+                        StabilityError, match="Explicit spot-grid scheme likely unstable"
+                    ):
+                        OptionValuation(
+                            self.ud, sp, PricingMethod.PDE_FD, params=params
+                        ).present_value()
+                    continue
+
+                pv = OptionValuation(
+                    self.ud, sp, PricingMethod.PDE_FD, params=params
+                ).present_value()
+                assert np.isclose(pv, baseline, rtol=0.005)
+
+    @pytest.mark.parametrize("payoff_fn", _CUSTOM_PAYOFFS)
+    def test_american(self, payoff_fn):
+        sp = PayoffSpec(
+            exercise_type=ExerciseType.AMERICAN,
+            maturity=MATURITY,
+            payoff_fn=payoff_fn,
+        )
+        base_params = PDEParams(spot_steps=400, time_steps=400)
+        baseline = OptionValuation(
+            self.ud, sp, PricingMethod.PDE_FD, params=base_params
+        ).present_value()
+
+        for method in (
+            PDEMethod.IMPLICIT,
+            PDEMethod.EXPLICIT,
+            PDEMethod.EXPLICIT_HULL,
+            PDEMethod.CRANK_NICOLSON,
+        ):
+            for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
+                is_explicit = method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL)
+                params = PDEParams(
+                    spot_steps=400,
+                    time_steps=400,
+                    method=method,
+                    space_grid=grid,
+                    american_solver=(
+                        PDEEarlyExercise.INTRINSIC if is_explicit else PDEEarlyExercise.GAUSS_SEIDEL
+                    ),
+                )
+
+                if is_explicit and grid is PDESpaceGrid.SPOT:
+                    with pytest.raises(
+                        StabilityError, match="Explicit spot-grid scheme likely unstable"
+                    ):
+                        OptionValuation(
+                            self.ud, sp, PricingMethod.PDE_FD, params=params
+                        ).present_value()
+                    continue
+
+                pv = OptionValuation(
+                    self.ud, sp, PricingMethod.PDE_FD, params=params
+                ).present_value()
+                assert np.isclose(pv, baseline, rtol=0.02)

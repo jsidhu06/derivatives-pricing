@@ -246,10 +246,7 @@ class OptionValuation:
             )
 
         # Strategy guardrails
-        if pricing_method in (
-            PricingMethod.BSM,
-            PricingMethod.PDE_FD,
-        ) and self._option_type not in (
+        if pricing_method is PricingMethod.BSM and self._option_type not in (
             OptionType.CALL,
             OptionType.PUT,
         ):

@@ -60,7 +60,7 @@ MC_PATHS = 200_000
 MC_SEED = 42
 NUM_STEPS = 60
 NUM_OBSERVATIONS = NUM_STEPS + 1
-BINOM_STEPS = 100
+BINOM_STEPS = 60
 ASIAN_TREE_AVERAGES = 100
 DEFAULT_SHORT_RATE = 0.03
 
@@ -2674,10 +2674,6 @@ def test_geometric_asian_four_method_comparison(
     and asserts they are broadly consistent (within MC noise).
     """
     maturity = PRICING_DATE + dt.timedelta(days=days)
-    # q_curve = (
-    #     None if q == 0.0
-    #     else flat_curve(PRICING_DATE, maturity, q)
-    # )
 
     # --- 1. Analytical (BSM) ---
     und_determ = _underlying(
