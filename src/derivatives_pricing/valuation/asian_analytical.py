@@ -368,25 +368,24 @@ class _AnalyticalAsianValuation:
         )
         df_T = float(self.valuation_ctx.discount_curve.df(time_to_maturity))
 
-        pricer = (
-            _asian_geometric_analytical
-            if spec.averaging is AsianAveraging.GEOMETRIC
-            else _asian_arithmetic_analytical
-        )
-
-        kwargs: dict[str, object] = dict(
+        if spec.averaging is AsianAveraging.GEOMETRIC:
+            return _asian_geometric_analytical(
+                strike=strike,
+                volatility=volatility,
+                discount_factor_T=df_T,
+                forward_prices=forwards,
+                observation_times=obs_times,
+                option_type=self.valuation_ctx.option_type,
+            )
+        return _asian_arithmetic_analytical(
             strike=strike,
             volatility=volatility,
+            time_to_maturity=time_to_maturity,
             discount_factor_T=df_T,
             forward_prices=forwards,
             observation_times=obs_times,
             option_type=self.valuation_ctx.option_type,
         )
-        # Arithmetic pricer also needs time_to_maturity for σ_a² = ln(M₂/M₁²)/T
-        if spec.averaging is AsianAveraging.ARITHMETIC:
-            kwargs["time_to_maturity"] = time_to_maturity
-
-        return pricer(**kwargs)
 
     def _seasoned_pv(self) -> float:
         """Price a seasoned Asian using Hull's adjusted-strike reduction.
