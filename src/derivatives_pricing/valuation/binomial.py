@@ -786,11 +786,20 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             continuation = discount_factors[t] * (p[t] * v_up + (1.0 - p[t]) * v_down)  # (k, t+1)
 
             if is_american:
-                exercise_avg = grid_here
-                if averaging is AsianAveraging.GEOMETRIC:
-                    exercise_avg = np.exp(exercise_avg)
-                exercise = self._average_payoff(exercise_avg)
-                values[:, rows, t] = np.maximum(continuation, exercise)
+                # Early exercise is only meaningful once at least one fixing
+                # observation has been recorded; before that the running average
+                # is undefined (avg_grid is zero-initialised) and would produce
+                # a spurious intrinsic value.
+                obs_count = int(np.searchsorted(observation_indices, t, side="right"))
+                total_obs = n1 + obs_count
+                if total_obs > 0:
+                    exercise_avg = grid_here
+                    if averaging is AsianAveraging.GEOMETRIC:
+                        exercise_avg = np.exp(exercise_avg)
+                    exercise = self._average_payoff(exercise_avg)
+                    values[:, rows, t] = np.maximum(continuation, exercise)
+                else:
+                    values[:, rows, t] = continuation
             else:
                 values[:, rows, t] = continuation
 
