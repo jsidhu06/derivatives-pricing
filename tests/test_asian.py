@@ -3653,3 +3653,49 @@ class TestBinomialAsianHullTreePricing:
             params = BinomialParams(num_steps=num_steps, asian_tree_averages=tree_averages)
         price = OptionValuation(ud, asian_spec, PricingMethod.BINOMIAL, params).present_value()
         assert np.isclose(price, expected_pv, atol=0.01)
+
+
+class TestBinomialAsianExerciseTypeRouting:
+    """Verify binomial Asian MC rejects Americans and Hull mode accepts both."""
+
+    BINOM_STEPS = 20
+
+    @staticmethod
+    def _make_spec(exercise_type: ExerciseType) -> AsianSpec:
+        return AsianSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            option_type=OptionType.CALL,
+            strike=50.0,
+            maturity=PRICING_DATE + dt.timedelta(days=365),
+            num_observations=21,
+            currency=CURRENCY,
+            exercise_type=exercise_type,
+        )
+
+    def test_mc_european_prices(self):
+        """Binomial MC mode returns a finite price for European Asians."""
+        ud = _hull_asian_underlying()
+        spec = self._make_spec(ExerciseType.EUROPEAN)
+        params = BinomialParams(num_steps=self.BINOM_STEPS, mc_paths=10_000, random_seed=42)
+        pv = OptionValuation(ud, spec, PricingMethod.BINOMIAL, params).present_value()
+        assert np.isfinite(pv) and pv > 0.0
+
+    def test_mc_american_raises(self):
+        """Binomial MC mode raises UnsupportedFeatureError for American Asians."""
+        ud = _hull_asian_underlying()
+        spec = self._make_spec(ExerciseType.AMERICAN)
+        params = BinomialParams(num_steps=self.BINOM_STEPS, mc_paths=10_000, random_seed=42)
+        with pytest.raises(
+            UnsupportedFeatureError, match="American early exercise is not supported"
+        ):
+            OptionValuation(ud, spec, PricingMethod.BINOMIAL, params).present_value()
+
+    @pytest.mark.parametrize("exercise_type", [ExerciseType.EUROPEAN, ExerciseType.AMERICAN])
+    def test_hull_mode_accepts_both(self, exercise_type: ExerciseType):
+        """Hull representative-average mode works for both European and American."""
+        ud = _hull_asian_underlying()
+        spec = self._make_spec(exercise_type)
+        tree_avg = 2 * self.BINOM_STEPS
+        params = BinomialParams(num_steps=self.BINOM_STEPS, asian_tree_averages=tree_avg)
+        pv = OptionValuation(ud, spec, PricingMethod.BINOMIAL, params).present_value()
+        assert np.isfinite(pv) and pv > 0.0

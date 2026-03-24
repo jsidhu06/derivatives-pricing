@@ -382,6 +382,13 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         np.ndarray
             Discounted pathwise payoffs.
         """
+        if self.valuation_ctx.spec.exercise_type is ExerciseType.AMERICAN:
+            raise UnsupportedFeatureError(
+                "American early exercise is not supported for binomial Asian MC. "
+                "Use Hull representative-average mode instead. Specify asian_tree_averages and "
+                "set mc_paths to None in BinomialParams."
+            )
+
         num_steps = int(self.binom_params.num_steps)
         logger.debug(
             "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
