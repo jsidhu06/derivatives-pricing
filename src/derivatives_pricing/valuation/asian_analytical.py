@@ -55,118 +55,72 @@ logger = logging.getLogger(__name__)
 
 def _asian_geometric_analytical(
     *,
-    spot: float,
     strike: float,
-    time_to_maturity: float,
     volatility: float,
-    risk_free_rate: float,
-    dividend_yield: float,
+    discount_factor_T: float,
+    forward_prices: np.ndarray,
+    observation_times: np.ndarray,
     option_type: OptionType,
-    num_observations: int | None = None,
-    averaging_start: float = 0.0,
-    observation_times: np.ndarray | None = None,
 ) -> float:
     """Kemna-Vorst closed-form price for a geometric average-price Asian option.
 
     The geometric average G = (∏ S(tᵢ))^(1/M) of GBM prices is lognormal.
 
-    Observation times can be specified in two ways:
+    Under any deterministic rate/dividend term structure the risk-neutral
+    forward price at tᵢ is ``Fᵢ = S₀ · D_q(tᵢ) / D_r(tᵢ)``.  The first two
+    moments of ``ln G`` are:
 
-    1. ``observation_times`` — explicit year-fraction array (arbitrary spacing).
-    2. ``num_observations`` + ``averaging_start`` — M equally spaced points
-       from ``averaging_start`` to ``time_to_maturity``.
-
-        E[ln G] = ln S₀ + (r − q − σ²/2) · t̄
+        E[ln G]   = mean(ln Fᵢ) − σ²/2 · t̄
         Var[ln G] = (σ²/M²) · ΣΣ min(tᵢ, tⱼ)
 
-    where t̄ = mean(tᵢ) is the mean observation time and M is the number
-    of observations.
-
-    The option price is then the standard Black-Scholes formula applied to the
-    lognormal variable G.
+    where t̄ = mean(tᵢ).  For flat curves this is numerically identical to
+    the classical ``(r − q)`` parameterisation.
 
     Parameters
     ----------
-    spot : float
-        Current underlying price S₀
     strike : float
         Strike price K
-    time_to_maturity : float
-        Time to maturity T in years (> 0)
     volatility : float
         Annualised volatility σ (> 0)
-    risk_free_rate : float
-        Continuously compounded risk-free rate r
-    dividend_yield : float
-        Continuously compounded dividend yield q
+    discount_factor_T : float
+        Risk-free discount factor D_r(T) at maturity
+    forward_prices : np.ndarray
+        Forward prices Fᵢ = S₀ · D_q(tᵢ) / D_r(tᵢ) at each observation time
+    observation_times : np.ndarray
+        Year-fraction observation times tᵢ (sorted, positive)
     option_type : OptionType
         CALL or PUT
-    num_observations : int | None
-        Number of equally spaced observation points M (≥ 2).
-        Mutually exclusive with ``observation_times``.
-    averaging_start : float
-        Year fraction from pricing date to the start of the averaging window
-        (default 0.0 = averaging starts at pricing date).
-        Only used with ``num_observations``.
-    observation_times : np.ndarray | None
-        Explicit observation year fractions (sorted, non-negative).
-        Mutually exclusive with ``num_observations``.
 
     Returns
     -------
     float
         Present value of the geometric Asian option
     """
-    if time_to_maturity <= 0:
-        raise ValidationError("time_to_maturity must be positive")
     if volatility <= 0:
         raise ValidationError("volatility must be positive")
     if strike < 0:
         raise ValidationError("strike must be >= 0")
 
-    if (observation_times is None) == (num_observations is None):
-        raise ValidationError("Provide exactly one of observation_times or num_observations.")
+    t = np.asarray(observation_times, dtype=float)
+    F = np.asarray(forward_prices, dtype=float)
+    if t.size < 2:
+        raise ValidationError("observation_times must have >= 2 entries")
 
-    T = time_to_maturity
     sigma = volatility
-    r = risk_free_rate
-    q = dividend_yield
-    S0 = spot
     K = strike
-
-    # Build observation-time array
-    if observation_times is not None:
-        t = np.asarray(observation_times, dtype=float)
-        if t.size < 2:
-            raise ValidationError("observation_times must have >= 2 entries")
-        M = t.size
-    else:
-        if num_observations < 2:
-            raise ValidationError("num_observations must be >= 2")
-        if averaging_start < 0:
-            raise ValidationError("averaging_start must be >= 0")
-        if averaging_start >= time_to_maturity:
-            raise ValidationError("averaging_start must be < time_to_maturity")
-        M = num_observations
-        N = M - 1
-        t_s = averaging_start
-        delta_t = (T - t_s) / N
-        t = t_s + np.arange(M, dtype=float) * delta_t
+    df = discount_factor_T
 
     # Mean observation time
     t_bar = np.mean(t)
 
-    # First moment: E[ln G]
-    M1 = np.log(S0) + (r - q - 0.5 * sigma**2) * t_bar
+    # First moment: E[ln G] = mean(ln Fᵢ) − σ²/2 · t̄
+    M1 = np.mean(np.log(F)) - 0.5 * sigma**2 * t_bar
 
     # Var[ln G] = (σ²/M²) · ΣΣ min(tᵢ, tⱼ)
     M2 = sigma**2 * np.mean(np.minimum.outer(t, t))
 
     # Forward of geometric average: E[G] = exp(M₁ + M₂/2)
     F_G = np.exp(M1 + 0.5 * M2)
-
-    # Discount to present
-    df = np.exp(-r * T)
 
     # Edge case: K = 0 → deep ITM, value is just discounted forward of average
     if K == 0.0:
@@ -189,32 +143,24 @@ def _asian_geometric_analytical(
 
 def _asian_arithmetic_analytical(
     *,
-    spot: float,
     strike: float,
-    time_to_maturity: float,
     volatility: float,
-    risk_free_rate: float,
-    dividend_yield: float,
+    time_to_maturity: float,
+    discount_factor_T: float,
+    forward_prices: np.ndarray,
+    observation_times: np.ndarray,
     option_type: OptionType,
-    num_observations: int | None = None,
-    averaging_start: float = 0.0,
-    observation_times: np.ndarray | None = None,
 ) -> float:
     """Turnbull-Wakeman moment-matching price for an arithmetic average Asian option.
 
     The arithmetic average S_avg = (1/M) Σ S(tᵢ) is **not** lognormal, but
-    its first two moments can be computed exactly under GBM.  A lognormal
-    distribution is fitted to those moments and Black's model is applied.
-
-    Observation times can be specified in two ways:
-
-    1. ``observation_times`` — explicit year-fraction array (arbitrary spacing).
-    2. ``num_observations`` + ``averaging_start`` — M equally spaced points
-       from ``averaging_start`` to ``time_to_maturity``.
+    its first two moments can be computed exactly under GBM with any
+    deterministic rate/dividend term structure.  A lognormal distribution is
+    fitted to those moments and Black's model is applied.
 
     Moment formulas (Hull equations 26.3–26.4 for discrete observations)
     --------------------------------------------------------------------
-    Forward price at tᵢ:  Fᵢ = S₀ · exp((r − q) · tᵢ)
+    Forward price at tᵢ:  Fᵢ = S₀ · D_q(tᵢ) / D_r(tᵢ)
 
         M₁ = E[S_avg] = (1/M) Σᵢ Fᵢ
 
@@ -229,30 +175,20 @@ def _asian_arithmetic_analytical(
 
     Parameters
     ----------
-    spot : float
-        Current underlying price S₀
     strike : float
         Strike price K
-    time_to_maturity : float
-        Time to maturity T in years (> 0)
     volatility : float
         Annualised volatility σ (> 0)
-    risk_free_rate : float
-        Continuously compounded risk-free rate r
-    dividend_yield : float
-        Continuously compounded dividend yield q
+    time_to_maturity : float
+        Time to maturity T in years (> 0)
+    discount_factor_T : float
+        Risk-free discount factor D_r(T) at maturity
+    forward_prices : np.ndarray
+        Forward prices Fᵢ = S₀ · D_q(tᵢ) / D_r(tᵢ) at each observation time
+    observation_times : np.ndarray
+        Year-fraction observation times tᵢ (sorted, positive)
     option_type : OptionType
         CALL or PUT
-    num_observations : int | None
-        Number of equally spaced observation points M (≥ 2).
-        Mutually exclusive with ``observation_times``.
-    averaging_start : float
-        Year fraction from pricing date to the start of the averaging window
-        (default 0.0 = averaging starts at pricing date).
-        Only used with ``num_observations``.
-    observation_times : np.ndarray | None
-        Explicit observation year fractions (sorted, non-negative).
-        Mutually exclusive with ``num_observations``.
 
     Returns
     -------
@@ -266,36 +202,16 @@ def _asian_arithmetic_analytical(
     if strike < 0:
         raise ValidationError("strike must be >= 0")
 
-    if (observation_times is None) == (num_observations is None):
-        raise ValidationError("Provide exactly one of observation_times or num_observations.")
-
     T = time_to_maturity
     sigma = volatility
-    r = risk_free_rate
-    q = dividend_yield
-    S0 = spot
     K = strike
+    df = discount_factor_T
 
-    # Build observation-time array
-    if observation_times is not None:
-        t = np.asarray(observation_times, dtype=float)
-        if t.size < 2:
-            raise ValidationError("observation_times must have >= 2 entries")
-        M = t.size
-    else:
-        if num_observations < 2:
-            raise ValidationError("num_observations must be >= 2")
-        if averaging_start < 0:
-            raise ValidationError("averaging_start must be >= 0")
-        if averaging_start >= time_to_maturity:
-            raise ValidationError("averaging_start must be < time_to_maturity")
-        M = num_observations
-        N = M - 1
-        t_s = averaging_start
-        delta_t = (T - t_s) / N
-        t = t_s + np.arange(M, dtype=float) * delta_t  # t[i] = t_s + i·Δ
-
-    F = S0 * np.exp((r - q) * t)  # Fᵢ = S₀ exp((r-q) tᵢ)
+    t = np.asarray(observation_times, dtype=float)
+    F = np.asarray(forward_prices, dtype=float)
+    if t.size < 2:
+        raise ValidationError("observation_times must have >= 2 entries")
+    M = t.size
 
     # ── First moment: M₁ = E[S_avg] = (1/M) Σ Fᵢ ──
     M1 = np.mean(F)
@@ -317,8 +233,6 @@ def _asian_arithmetic_analytical(
     sigma_a = np.sqrt(sigma_a_sq)
 
     # ── Black's model with F₀ = M₁ ──
-    df = np.exp(-r * T)
-
     # Edge case: K = 0 → deep ITM, value is just discounted first moment
     if K == 0.0:
         if option_type is OptionType.CALL:
@@ -328,7 +242,6 @@ def _asian_arithmetic_analytical(
     vol_sqrt_T = sigma_a * np.sqrt(T)
     d1 = (np.log(M1 / K) + 0.5 * sigma_a_sq * T) / vol_sqrt_T
     d2 = d1 - vol_sqrt_T
-    df = np.exp(-r * T)
 
     if option_type is OptionType.CALL:
         return float(df * (M1 * norm.cdf(d1) - K * norm.cdf(d2)))
@@ -356,18 +269,54 @@ class _AnalyticalAsianValuation:
                 "Analytical (BSM) Asian pricing requires GEOMETRIC or ARITHMETIC averaging."
             )
 
-    def _extract_rates(self, time_to_maturity: float) -> tuple[float, float]:
-        """Extract effective continuously compounded rates from discount/dividend curves."""
-        df_r = float(self.valuation_ctx.discount_curve.df(time_to_maturity))
-        r = -np.log(df_r) / time_to_maturity
+    def _observation_times_and_forwards(
+        self,
+        spec: AsianSpec,
+        spot: float,
+        time_to_maturity: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Build observation times and corresponding curve-derived forward prices.
 
-        dividend_curve = self.underlying.dividend_curve
-        if dividend_curve is not None:
-            df_q = float(dividend_curve.df(time_to_maturity))
-            q = -np.log(df_q) / time_to_maturity
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            ``(observation_times, forward_prices)`` — year-fraction array and
+            ``F(tᵢ) = S₀ · D_q(tᵢ) / D_r(tᵢ)`` at each observation time.
+        """
+        day_count = self.valuation_ctx.day_count_convention
+        pricing_date = self.valuation_ctx.pricing_date
+
+        if spec.fixing_dates is not None:
+            obs_times = np.array(
+                [
+                    calculate_year_fraction(pricing_date, d, day_count_convention=day_count)
+                    for d in spec.fixing_dates
+                ],
+                dtype=float,
+            )
         else:
-            q = 0.0
-        return r, q
+            # Equally spaced mode
+            averaging_start_frac = 0.0
+            if spec.averaging_start is not None and spec.averaging_start > pricing_date:
+                averaging_start_frac = calculate_year_fraction(
+                    pricing_date,
+                    spec.averaging_start,
+                    day_count_convention=day_count,
+                )
+            M = spec.num_observations
+            N = M - 1
+            delta_t = (time_to_maturity - averaging_start_frac) / N
+            obs_times = averaging_start_frac + np.arange(M, dtype=float) * delta_t
+
+        # Curve-derived forward prices at each observation time
+        df_r = self.valuation_ctx.discount_curve.df(obs_times)
+        dividend_curve = self.underlying.dividend_curve
+        df_q = (
+            dividend_curve.df(obs_times) if dividend_curve is not None else np.ones_like(obs_times)
+        )
+        forwards = spot * df_q / df_r
+
+        return obs_times, forwards
 
     def solve(self) -> float:
         """Return the analytical option value."""
@@ -412,7 +361,12 @@ class _AnalyticalAsianValuation:
                 "Use MONTE_CARLO or BINOMIAL."
             )
 
-        r, q = self._extract_rates(time_to_maturity)
+        obs_times, forwards = self._observation_times_and_forwards(
+            spec,
+            spot,
+            time_to_maturity,
+        )
+        df_T = float(self.valuation_ctx.discount_curve.df(time_to_maturity))
 
         pricer = (
             _asian_geometric_analytical
@@ -420,50 +374,19 @@ class _AnalyticalAsianValuation:
             else _asian_arithmetic_analytical
         )
 
-        if spec.fixing_dates is not None:
-            day_count = self.valuation_ctx.day_count_convention
-            pricing_date = self.valuation_ctx.pricing_date
-            obs_times = np.array(
-                [
-                    calculate_year_fraction(pricing_date, d, day_count_convention=day_count)
-                    for d in spec.fixing_dates
-                ],
-                dtype=float,
-            )
-            return pricer(
-                spot=spot,
-                strike=strike,
-                time_to_maturity=time_to_maturity,
-                volatility=volatility,
-                risk_free_rate=r,
-                dividend_yield=q,
-                option_type=self.valuation_ctx.option_type,
-                observation_times=obs_times,
-            )
-
-        # Equally spaced mode
-        averaging_start_frac = 0.0
-        if (
-            spec.averaging_start is not None
-            and spec.averaging_start > self.valuation_ctx.pricing_date
-        ):
-            averaging_start_frac = calculate_year_fraction(
-                self.valuation_ctx.pricing_date,
-                spec.averaging_start,
-                day_count_convention=self.valuation_ctx.day_count_convention,
-            )
-
-        return pricer(
-            spot=spot,
+        kwargs: dict[str, object] = dict(
             strike=strike,
-            time_to_maturity=time_to_maturity,
             volatility=volatility,
-            risk_free_rate=r,
-            dividend_yield=q,
+            discount_factor_T=df_T,
+            forward_prices=forwards,
+            observation_times=obs_times,
             option_type=self.valuation_ctx.option_type,
-            num_observations=spec.num_observations,
-            averaging_start=averaging_start_frac,
         )
+        # Arithmetic pricer also needs time_to_maturity for σ_a² = ln(M₂/M₁²)/T
+        if spec.averaging is AsianAveraging.ARITHMETIC:
+            kwargs["time_to_maturity"] = time_to_maturity
+
+        return pricer(**kwargs)
 
     def _seasoned_pv(self) -> float:
         """Price a seasoned Asian using Hull's adjusted-strike reduction.
