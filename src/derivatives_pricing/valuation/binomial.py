@@ -367,8 +367,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         mapped: list[int] = []
         for d in fixing_dates:
             idx = int(np.argmin(np.abs(tree_seconds - d.timestamp())))
-            if not mapped or idx != mapped[-1]:
-                mapped.append(idx)
+            mapped.append(idx)
 
         if not mapped:
             raise ValidationError("No valid Asian observation nodes mapped to the binomial tree.")
@@ -599,9 +598,12 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         obs_count_now = int(np.searchsorted(observation_indices, t, side="right"))
         obs_so_far = n1 + obs_count_now
         obs_count_next = int(np.searchsorted(observation_indices, t + 1, side="right"))
-        if obs_count_next > obs_count_now:
-            avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)  # (k, t+1)
-            avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)  # (k, t+1)
+        new_obs = obs_count_next - obs_count_now
+        if new_obs > 0:
+            avg_up = (obs_so_far * grid_here + new_obs * s_up) / (obs_so_far + new_obs)  # (k, t+1)
+            avg_down = (obs_so_far * grid_here + new_obs * s_down) / (
+                obs_so_far + new_obs
+            )  # (k, t+1)
             return avg_up, avg_down
         return grid_here, grid_here
 
