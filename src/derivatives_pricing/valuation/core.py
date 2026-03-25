@@ -840,7 +840,7 @@ class OptionValuation:
 
     def _as_underlying_data(self) -> UnderlyingData:
         """Return an UnderlyingData instance, extracting from GBMProcess if needed."""
-        return as_underlying_data(self._underlying)
+        return as_underlying_data(self._underlying)  # type: ignore[arg-type]
 
     def _apply_asian_control_variate(self, base_pv: float) -> float:
         """Apply Asian-option European control-variate adjustment.
