@@ -20,7 +20,7 @@ Parameter classes:
 """
 
 from .contracts import VanillaSpec, PayoffSpec, AsianSpec, WingBoundary, PayoffBoundaryModel
-from .core import OptionValuation, UnderlyingData
+from .core import OptionValuation, UnderlyingData, as_underlying_data
 from .params import (
     MonteCarloParams,
     BinomialParams,
@@ -39,6 +39,7 @@ __all__ = [
     # Core valuation classes
     "OptionValuation",
     "UnderlyingData",
+    "as_underlying_data",
     # Parameter classes
     "MonteCarloParams",
     "BinomialParams",

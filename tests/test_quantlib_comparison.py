@@ -23,6 +23,7 @@ from derivatives_pricing.valuation import (
     VanillaSpec,
     OptionValuation,
     UnderlyingData,
+    as_underlying_data,
 )
 from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
 from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
@@ -652,13 +653,20 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
+    pa_analytical = OptionValuation(
+        as_underlying_data(gbm), spec, PricingMethod.BSM
+    ).present_value()
 
     logger.info(
-        "Asian arith call monthly | QL_TW=%.6f PA_MC=%.6f",
+        "Asian arith call monthly | QL_TW=%.6f PA_MC=%.6f PA_AN=%.6f",
         ql_tw,
         pa_mc,
+        pa_analytical,
     )
-    assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA {pa_mc:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(pa_analytical, ql_tw, rtol=0.005), (
+        f"PA_AN {pa_analytical:.6f} vs QL {ql_tw:.6f}"
+    )
 
 
 # ── Test 2: Quarterly fixings — geometric put ───────────────────────────
@@ -699,13 +707,20 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
+    pa_analytical = OptionValuation(
+        as_underlying_data(gbm), spec, PricingMethod.BSM
+    ).present_value()
 
     logger.info(
-        "Asian geom put quarterly | QL_analytic=%.6f PA_MC=%.6f",
+        "Asian geom put quarterly | QL_analytic=%.6f PA_MC=%.6f PA_AN=%.6f",
         ql_analytic,
         pa_mc,
+        pa_analytical,
     )
-    assert np.isclose(pa_mc, ql_analytic, rtol=0.015), f"PA {pa_mc:.6f} vs QL {ql_analytic:.6f}"
+    assert np.isclose(pa_mc, ql_analytic, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_analytic:.6f}"
+    assert np.isclose(pa_analytical, ql_analytic, rtol=0.005), (
+        f"PA_AN {pa_analytical:.6f} vs QL {ql_analytic:.6f}"
+    )
 
 
 # ── Test 3: Non-flat rate and dividend curves — arithmetic put ──────────
@@ -766,13 +781,20 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
+    pa_analytical = OptionValuation(
+        as_underlying_data(gbm), spec, PricingMethod.BSM
+    ).present_value()
 
     logger.info(
-        "Asian arith put nonflat curves | QL_TW=%.6f PA_MC=%.6f",
+        "Asian arith put nonflat curves | QL_TW=%.6f PA_MC=%.6f PA_AN=%.6f",
         ql_tw,
         pa_mc,
+        pa_analytical,
     )
-    assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA {pa_mc:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(pa_analytical, ql_tw, rtol=0.005), (
+        f"PA_AN {pa_analytical:.6f} vs QL {ql_tw:.6f}"
+    )
 
 
 def test_asian_geometric_put_nonflat_curves_vs_quantlib():
@@ -820,13 +842,21 @@ def test_asian_geometric_put_nonflat_curves_vs_quantlib():
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
+    pa_analytical = OptionValuation(
+        as_underlying_data(gbm), spec, PricingMethod.BSM
+    ).present_value()
 
     logger.info(
-        "Asian geom put nonflat curves | QL_MC=%.6f PA_MC=%.6f",
+        "Asian geom put nonflat curves | QL_MC=%.6f PA_MC=%.6f PA_AN=%.6f",
         ql_mc,
         pa_mc,
+        pa_analytical,
     )
-    assert np.isclose(pa_mc, ql_mc, rtol=0.015), f"PA {pa_mc:.6f} vs QL {ql_mc:.6f}"
+    assert np.isclose(pa_mc, ql_mc, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_mc:.6f}"
+    # QL benchmark here is MC (500K paths), so use wider tolerance
+    assert np.isclose(pa_analytical, ql_mc, rtol=0.015), (
+        f"PA_AN {pa_analytical:.6f} vs QL_MC {ql_mc:.6f}"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

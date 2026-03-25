@@ -726,6 +726,45 @@ def _pa_asian_mc_greeks(
     }
 
 
+def _pa_asian_analytical_greeks(
+    *,
+    option_type: OptionType,
+    averaging: AsianAveraging,
+    strike: float,
+    spot: float,
+    vol: float,
+    risk_free_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
+) -> dict[str, float]:
+    """Build our analytical (BSM) Asian and compute numerical Greeks."""
+    md = MarketData(PRICING_DATE, risk_free_curve, currency=CURRENCY, day_count_convention=dcc)
+    underlying = UnderlyingData(
+        initial_value=spot,
+        volatility=vol,
+        market_data=md,
+        dividend_curve=dividend_curve,
+    )
+    spec = AsianSpec(
+        averaging=averaging,
+        option_type=option_type,
+        strike=strike,
+        maturity=MATURITY,
+        currency=CURRENCY,
+        fixing_dates=_ASIAN_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
+    )
+    ov = OptionValuation(underlying, spec, PricingMethod.BSM)
+    return {
+        "npv": ov.present_value(),
+        "delta": ov.delta(),
+        "gamma": ov.gamma(),
+        "vega": ov.vega(),
+        "theta": ov.theta(),
+        "rho": ov.rho(),
+    }
+
+
 _ASIAN_GREEK_SCENARIOS = [
     # Geometric (all 5 Greeks available from QL analytic engine)
     pytest.param(
@@ -815,26 +854,44 @@ def test_asian_mc_greeks_vs_quantlib(
         dividend_curve=q_curve,
         dcc=dcc,
     )
+    pa_an_greeks = _pa_asian_analytical_greeks(
+        option_type=option_type,
+        averaging=averaging,
+        strike=strike,
+        spot=spot,
+        vol=vol,
+        risk_free_curve=r_curve,
+        dividend_curve=q_curve,
+        dcc=dcc,
+    )
 
     # Tolerances: MC numerical bump-and-revalue vs analytic/TW
-    tols = {"delta": 0.03, "gamma": 0.10, "vega": 0.05, "theta": 0.10, "rho": 0.10}
+    mc_tols = {"delta": 0.03, "gamma": 0.10, "vega": 0.05, "theta": 0.10, "rho": 0.10}
+    # Analytical bump-and-revalue vs QL analytic/TW.  Match MC tolerances —
+    # QL's own geometric analytic engine has limitations with non-flat curves
+    an_tols = {"delta": 0.03, "gamma": 0.10, "vega": 0.05, "theta": 0.10, "rho": 0.10}
 
     for greek in ("delta", "gamma", "vega", "theta", "rho"):
         ql_val = ql_greeks[greek]
         if ql_val is None:
             continue  # TW engine doesn't provide this greek
         pa_val = pa_greeks[greek]
+        pa_an_val = pa_an_greeks[greek]
         ql_scaled = ql_val * _QL_SCALE[greek]
         logger.info(
-            "Asian %s %s %s S=%.0f K=%.0f | PA=%.6f QL=%.6f",
+            "Asian %s %s %s S=%.0f K=%.0f | PA_MC=%.6f PA_AN=%.6f QL=%.6f",
             averaging.value,
             option_type.value,
             greek,
             spot,
             strike,
             pa_val,
+            pa_an_val,
             ql_scaled,
         )
-        assert np.isclose(pa_val, ql_scaled, rtol=tols[greek], atol=1e-4), (
-            f"{greek}: PA {pa_val:.6f} vs QL {ql_scaled:.6f}"
+        assert np.isclose(pa_val, ql_scaled, rtol=mc_tols[greek], atol=1e-4), (
+            f"{greek}: PA_MC {pa_val:.6f} vs QL {ql_scaled:.6f}"
+        )
+        assert np.isclose(pa_an_val, ql_scaled, rtol=an_tols[greek], atol=1e-4), (
+            f"{greek}: PA_AN {pa_an_val:.6f} vs QL {ql_scaled:.6f}"
         )

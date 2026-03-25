@@ -202,6 +202,31 @@ class UnderlyingData:
         return dc_replace(self, **kwargs)  # type: ignore[arg-type]
 
 
+def as_underlying_data(process: GBMProcess | UnderlyingData) -> UnderlyingData:
+    """Convert a GBMProcess to an UnderlyingData instance.
+
+    If *process* is already an ``UnderlyingData``, it is returned unchanged.
+    This is useful when you have a Monte-Carlo process but need to run a
+    deterministic method (BSM, binomial, PDE) that requires ``UnderlyingData``.
+
+    Only ``GBMProcess`` is accepted — converting jump-diffusion or
+    mean-reverting processes would silently discard non-GBM parameters.
+    """
+    if isinstance(process, UnderlyingData):
+        return process
+    if isinstance(process, GBMProcess):
+        return UnderlyingData(
+            initial_value=process.initial_value,
+            volatility=process.volatility,
+            market_data=process.market_data,
+            dividend_curve=process.dividend_curve,
+            discrete_dividends=process.discrete_dividends or None,
+        )
+    raise ConfigurationError(
+        f"Expected UnderlyingData or GBMProcess, got {type(process).__name__}."
+    )
+
+
 class OptionValuation:
     """Single-factor option valuation facade and dispatcher.
     Instances are effectively immutable once created — constructor arguments are exposed as
