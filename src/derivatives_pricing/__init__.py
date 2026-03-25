@@ -8,7 +8,7 @@ except PackageNotFoundError:
     __version__ = "0+unknown"
 
 from .exceptions import (
-    DerivativesAnalyticsError,
+    DerivativesPricingError,
     ValidationError,
     ConfigurationError,
     UnsupportedFeatureError,
@@ -96,7 +96,7 @@ __all__ = [
     "ImpliedVolResult",
     "implied_volatility",
     # Exceptions
-    "DerivativesAnalyticsError",
+    "DerivativesPricingError",
     "ValidationError",
     "ConfigurationError",
     "UnsupportedFeatureError",
