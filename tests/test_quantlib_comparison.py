@@ -46,7 +46,7 @@ CURRENCY = "USD"
 
 
 def _ql_dcc(dcc: DayCountConvention):
-    """Return the QuantLib DayCounter matching a PA DayCountConvention."""
+    """Return the QuantLib DayCounter matching a DP DayCountConvention."""
     if dcc is DayCountConvention.ACT_360:
         return ql.Actual360()
     return ql.Actual365Fixed()
@@ -589,7 +589,7 @@ def _ql_discrete_asian_price(
     return opt.NPV()
 
 
-def _pa_asian_market_data(
+def _dp_asian_market_data(
     r_curve: DiscountCurve | None = None,
     dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> MarketData:
@@ -598,7 +598,7 @@ def _pa_asian_market_data(
     return MarketData(PRICING_DATE, curve, currency=CURRENCY, day_count_convention=dcc)
 
 
-def _pa_asian_gbm(
+def _dp_asian_gbm(
     *,
     fixing_dates: tuple[dt.datetime, ...],
     spot: float = _ASIAN_SPOT,
@@ -607,7 +607,7 @@ def _pa_asian_gbm(
     dividend_curve: DiscountCurve | None = None,
     dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> GBMProcess:
-    md = _pa_asian_market_data(r_curve, dcc=dcc)
+    md = _dp_asian_market_data(r_curve, dcc=dcc)
     params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=dividend_curve)
     sim_cfg = SimulationConfig(
         paths=_ASIAN_MC_PATHS,
@@ -646,26 +646,26 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         fixing_dates=_MONTHLY_FIXINGS,
         exercise_type=ExerciseType.EUROPEAN,
     )
-    gbm = _pa_asian_gbm(fixing_dates=_MONTHLY_FIXINGS, dcc=DayCountConvention.ACT_360)
-    pa_mc = OptionValuation(
+    gbm = _dp_asian_gbm(fixing_dates=_MONTHLY_FIXINGS, dcc=DayCountConvention.ACT_360)
+    dp_mc = OptionValuation(
         gbm,
         spec,
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
-    pa_analytical = OptionValuation(
+    dp_analytical = OptionValuation(
         as_underlying_data(gbm), spec, PricingMethod.BSM
     ).present_value()
 
     logger.info(
-        "Asian arith call monthly | QL_TW=%.6f PA_MC=%.6f PA_AN=%.6f",
+        "Asian arith call monthly | QL_TW=%.6f DP_MC=%.6f DP_AN=%.6f",
         ql_tw,
-        pa_mc,
-        pa_analytical,
+        dp_mc,
+        dp_analytical,
     )
-    assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_tw:.6f}"
-    assert np.isclose(pa_analytical, ql_tw, rtol=0.005), (
-        f"PA_AN {pa_analytical:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(dp_mc, ql_tw, rtol=0.015), f"DP_MC {dp_mc:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(dp_analytical, ql_tw, rtol=0.005), (
+        f"DP_AN {dp_analytical:.6f} vs QL {ql_tw:.6f}"
     )
 
 
@@ -700,26 +700,26 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         fixing_dates=_QUARTERLY_FIXINGS,
         exercise_type=ExerciseType.EUROPEAN,
     )
-    gbm = _pa_asian_gbm(fixing_dates=_QUARTERLY_FIXINGS, dcc=DayCountConvention.ACT_365F)
-    pa_mc = OptionValuation(
+    gbm = _dp_asian_gbm(fixing_dates=_QUARTERLY_FIXINGS, dcc=DayCountConvention.ACT_365F)
+    dp_mc = OptionValuation(
         gbm,
         spec,
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
-    pa_analytical = OptionValuation(
+    dp_analytical = OptionValuation(
         as_underlying_data(gbm), spec, PricingMethod.BSM
     ).present_value()
 
     logger.info(
-        "Asian geom put quarterly | QL_analytic=%.6f PA_MC=%.6f PA_AN=%.6f",
+        "Asian geom put quarterly | QL_analytic=%.6f DP_MC=%.6f DP_AN=%.6f",
         ql_analytic,
-        pa_mc,
-        pa_analytical,
+        dp_mc,
+        dp_analytical,
     )
-    assert np.isclose(pa_mc, ql_analytic, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_analytic:.6f}"
-    assert np.isclose(pa_analytical, ql_analytic, rtol=0.005), (
-        f"PA_AN {pa_analytical:.6f} vs QL {ql_analytic:.6f}"
+    assert np.isclose(dp_mc, ql_analytic, rtol=0.015), f"DP_MC {dp_mc:.6f} vs QL {ql_analytic:.6f}"
+    assert np.isclose(dp_analytical, ql_analytic, rtol=0.005), (
+        f"DP_AN {dp_analytical:.6f} vs QL {ql_analytic:.6f}"
     )
 
 
@@ -770,30 +770,30 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         fixing_dates=_BIMONTHLY_FIXINGS,
         exercise_type=ExerciseType.EUROPEAN,
     )
-    gbm = _pa_asian_gbm(
+    gbm = _dp_asian_gbm(
         fixing_dates=_BIMONTHLY_FIXINGS,
         r_curve=r_curve,
         dividend_curve=q_curve,
     )
-    pa_mc = OptionValuation(
+    dp_mc = OptionValuation(
         gbm,
         spec,
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
-    pa_analytical = OptionValuation(
+    dp_analytical = OptionValuation(
         as_underlying_data(gbm), spec, PricingMethod.BSM
     ).present_value()
 
     logger.info(
-        "Asian arith put nonflat curves | QL_TW=%.6f PA_MC=%.6f PA_AN=%.6f",
+        "Asian arith put nonflat curves | QL_TW=%.6f DP_MC=%.6f DP_AN=%.6f",
         ql_tw,
-        pa_mc,
-        pa_analytical,
+        dp_mc,
+        dp_analytical,
     )
-    assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_tw:.6f}"
-    assert np.isclose(pa_analytical, ql_tw, rtol=0.005), (
-        f"PA_AN {pa_analytical:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(dp_mc, ql_tw, rtol=0.015), f"DP_MC {dp_mc:.6f} vs QL {ql_tw:.6f}"
+    assert np.isclose(dp_analytical, ql_tw, rtol=0.005), (
+        f"DP_AN {dp_analytical:.6f} vs QL {ql_tw:.6f}"
     )
 
 
@@ -831,31 +831,31 @@ def test_asian_geometric_put_nonflat_curves_vs_quantlib():
         fixing_dates=_BIMONTHLY_FIXINGS,
         exercise_type=ExerciseType.EUROPEAN,
     )
-    gbm = _pa_asian_gbm(
+    gbm = _dp_asian_gbm(
         fixing_dates=_BIMONTHLY_FIXINGS,
         r_curve=r_curve,
         dividend_curve=q_curve,
     )
-    pa_mc = OptionValuation(
+    dp_mc = OptionValuation(
         gbm,
         spec,
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
-    pa_analytical = OptionValuation(
+    dp_analytical = OptionValuation(
         as_underlying_data(gbm), spec, PricingMethod.BSM
     ).present_value()
 
     logger.info(
-        "Asian geom put nonflat curves | QL_MC=%.6f PA_MC=%.6f PA_AN=%.6f",
+        "Asian geom put nonflat curves | QL_MC=%.6f DP_MC=%.6f DP_AN=%.6f",
         ql_mc,
-        pa_mc,
-        pa_analytical,
+        dp_mc,
+        dp_analytical,
     )
-    assert np.isclose(pa_mc, ql_mc, rtol=0.015), f"PA_MC {pa_mc:.6f} vs QL {ql_mc:.6f}"
+    assert np.isclose(dp_mc, ql_mc, rtol=0.015), f"DP_MC {dp_mc:.6f} vs QL {ql_mc:.6f}"
     # QL benchmark here is MC (500K paths), so use wider tolerance
-    assert np.isclose(pa_analytical, ql_mc, rtol=0.015), (
-        f"PA_AN {pa_analytical:.6f} vs QL_MC {ql_mc:.6f}"
+    assert np.isclose(dp_analytical, ql_mc, rtol=0.015), (
+        f"DP_AN {dp_analytical:.6f} vs QL_MC {ql_mc:.6f}"
     )
 
 

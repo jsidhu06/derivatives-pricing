@@ -810,7 +810,7 @@ def _greeks(ov: OptionValuation) -> dict[str, float]:
     }
 
 
-_ASIAN_AM_PA_SCENARIOS = [
+_ASIAN_AM_DP_SCENARIOS = [
     pytest.param(
         100.0,
         100.0,
@@ -857,7 +857,7 @@ _ASIAN_AM_PA_SCENARIOS = [
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "spot,strike,option_type,averaging,rate_kind,div_kind,discrete_dividends",
-    _ASIAN_AM_PA_SCENARIOS,
+    _ASIAN_AM_DP_SCENARIOS,
 )
 def test_asian_american_greeks_binomial_vs_mc(
     spot,
@@ -868,7 +868,7 @@ def test_asian_american_greeks_binomial_vs_mc(
     div_kind,
     discrete_dividends,
 ):
-    """For Asian scenarios unsupported by QL, PA binomial and MC greeks should broadly align."""
+    """For Asian scenarios unsupported by QL, DP binomial and MC greeks should broadly align."""
     r_curve = _asian_curve(rate_kind, is_dividend=False)
     q_curve = _asian_curve(div_kind, is_dividend=True)
     assert r_curve is not None
