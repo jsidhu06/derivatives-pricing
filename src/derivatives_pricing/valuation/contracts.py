@@ -77,6 +77,37 @@ class VanillaSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class WingBoundary:
+    """Affine boundary model on one wing: ``payoff(S) ~ slope * S + intercept``.
+
+    The PDE engine uses this as an affine approximation at the truncated
+    computational boundary.  On spot grids this will often coincide with
+    the true payoff tail behaviour; on log-spot grids it should be
+    interpreted as a local boundary model at the finite boundary.
+    """
+
+    slope: float
+    intercept: float
+
+
+@dataclass(frozen=True, slots=True)
+class PayoffBoundaryModel:
+    """Left/right affine boundary models for a custom payoff.
+
+    Used by the PDE solver to set continuation values at the truncated domain
+    boundaries. On spot grids these often coincide with true payoff tail
+    behaviour; on log-spot grids they are best interpreted as affine
+    approximations at the finite boundaries used by the PDE grid.
+
+    If not supplied on ``PayoffSpec``, the PDE engine will fit them
+    numerically from the payoff callable.
+    """
+
+    left: WingBoundary
+    right: WingBoundary
+
+
+@dataclass(frozen=True, slots=True)
 class PayoffSpec:
     """Contract specification for a single-contract custom payoff.
 
@@ -100,6 +131,10 @@ class PayoffSpec:
         Contract multiplier (default 100).  Not applied by ``OptionValuation``
         (which returns per-unit values); intended for portfolio-level position
         sizing.
+    boundary_model
+        Optional explicit affine boundary models for PDE boundary conditions.
+        If ``None``, the PDE solver will fit them numerically from ``payoff_fn``
+        using the actual truncated PDE boundary neighborhoods.
 
     Notes
     -----
@@ -112,6 +147,7 @@ class PayoffSpec:
     payoff_fn: Callable[[np.ndarray | float], np.ndarray]
     currency: str | None = None
     contract_size: int | float = 100
+    boundary_model: PayoffBoundaryModel | None = None
 
     # Kept for compatibility with vanilla valuation interfaces
     strike: None = None
@@ -129,6 +165,13 @@ class PayoffSpec:
             )
         if not callable(self.payoff_fn):
             raise ConfigurationError("payoff_fn must be callable")
+        if self.boundary_model is not None and not isinstance(
+            self.boundary_model, PayoffBoundaryModel
+        ):
+            raise ConfigurationError(
+                "boundary_model must be PayoffBoundaryModel or None, "
+                f"got {type(self.boundary_model).__name__}"
+            )
 
     def payoff(self, spot: np.ndarray | float) -> np.ndarray:
         """Vectorized payoff as a function of spot."""

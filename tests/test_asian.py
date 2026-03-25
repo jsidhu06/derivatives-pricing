@@ -60,7 +60,7 @@ MC_PATHS = 200_000
 MC_SEED = 42
 NUM_STEPS = 60
 NUM_OBSERVATIONS = NUM_STEPS + 1
-BINOM_STEPS = 100
+BINOM_STEPS = 60
 ASIAN_TREE_AVERAGES = 100
 DEFAULT_SHORT_RATE = 0.03
 
@@ -1714,15 +1714,16 @@ class TestContinuousLimit:
         continuous_call = np.exp(-r * T) * (F_G * norm.cdf(d1) - K * norm.cdf(d2))
 
         # Discrete with N=10000
+        N = 10_000
+        t = np.linspace(0, T, N)
+        F = S0 * np.exp((r - q) * t)
         discrete_call = _asian_geometric_analytical(
-            spot=S0,
             strike=K,
-            time_to_maturity=T,
             volatility=sigma,
-            risk_free_rate=r,
-            dividend_yield=q,
+            discount_factor_T=np.exp(-r * T),
+            forward_prices=F,
+            observation_times=t,
             option_type=OptionType.CALL,
-            num_observations=10_000,
         )
 
         assert np.isclose(discrete_call, continuous_call, rtol=1e-4)
@@ -2502,38 +2503,34 @@ class TestValidation:
             )
 
     def test_pure_function_validation(self):
-        with pytest.raises(Exception, match="time_to_maturity"):
+        # observation_times must have >= 2 entries
+        with pytest.raises(Exception, match="observation_times"):
             _asian_geometric_analytical(
-                spot=100,
                 strike=100,
-                time_to_maturity=-1,
                 volatility=0.2,
-                risk_free_rate=0.05,
-                dividend_yield=0.0,
+                discount_factor_T=np.exp(-0.05),
+                forward_prices=np.array([100.0]),
+                observation_times=np.array([0.5]),
                 option_type=OptionType.CALL,
-                num_observations=12,
             )
         with pytest.raises(Exception, match="volatility"):
             _asian_geometric_analytical(
-                spot=100,
                 strike=100,
-                time_to_maturity=1,
                 volatility=-0.2,
-                risk_free_rate=0.05,
-                dividend_yield=0.0,
+                discount_factor_T=np.exp(-0.05),
+                forward_prices=np.array([100.0, 102.0]),
+                observation_times=np.array([0.5, 1.0]),
                 option_type=OptionType.CALL,
-                num_observations=12,
             )
-        with pytest.raises(Exception, match="num_observations"):
+        # observation_times must have >= 2 entries (single element)
+        with pytest.raises(Exception, match="observation_times"):
             _asian_geometric_analytical(
-                spot=100,
                 strike=100,
-                time_to_maturity=1,
                 volatility=0.2,
-                risk_free_rate=0.05,
-                dividend_yield=0.0,
+                discount_factor_T=np.exp(-0.05),
+                forward_prices=np.array([100.0]),
+                observation_times=np.array([1.0]),
                 option_type=OptionType.CALL,
-                num_observations=1,
             )
 
 
@@ -2674,10 +2671,6 @@ def test_geometric_asian_four_method_comparison(
     and asserts they are broadly consistent (within MC noise).
     """
     maturity = PRICING_DATE + dt.timedelta(days=days)
-    # q_curve = (
-    #     None if q == 0.0
-    #     else flat_curve(PRICING_DATE, maturity, q)
-    # )
 
     # --- 1. Analytical (BSM) ---
     und_determ = _underlying(
@@ -2837,15 +2830,17 @@ class TestHullExample26_3:
         S0, K, r, q, sigma, T = 50.0, 50.0, 0.1, 0.0, 0.4, 1.0
 
         # Large N approximates continuous average
+        N = 10_000
+        t = np.linspace(0, T, N)
+        F = S0 * np.exp((r - q) * t)
         price = _asian_arithmetic_analytical(
-            spot=S0,
             strike=K,
             time_to_maturity=T,
             volatility=sigma,
-            risk_free_rate=r,
-            dividend_yield=q,
+            discount_factor_T=np.exp(-r * T),
+            forward_prices=F,
+            observation_times=t,
             option_type=OptionType.CALL,
-            num_observations=10_000,
         )
         assert np.isclose(price, 5.62, atol=0.02), f"price={price:.4f} expected ~5.62"
 
@@ -2860,16 +2855,17 @@ class TestHullExample26_3:
 
         for m, hull_price in [(12, 6.00), (52, 5.70), (250, 5.63)]:
             # averaging_start = T/m skips S₀, giving m obs at T/m, ..., T
+            t_s = T / m
+            t = t_s + np.arange(m, dtype=float) * (T - t_s) / (m - 1)
+            F = S0 * np.exp((r - q) * t)
             price = _asian_arithmetic_analytical(
-                spot=S0,
                 strike=K,
                 time_to_maturity=T,
                 volatility=sigma,
-                risk_free_rate=r,
-                dividend_yield=q,
+                discount_factor_T=np.exp(-r * T),
+                forward_prices=F,
+                observation_times=t,
                 option_type=OptionType.CALL,
-                num_observations=m,
-                averaging_start=T / m,
             )
 
             logger.info(
@@ -3657,3 +3653,49 @@ class TestBinomialAsianHullTreePricing:
             params = BinomialParams(num_steps=num_steps, asian_tree_averages=tree_averages)
         price = OptionValuation(ud, asian_spec, PricingMethod.BINOMIAL, params).present_value()
         assert np.isclose(price, expected_pv, atol=0.01)
+
+
+class TestBinomialAsianExerciseTypeRouting:
+    """Verify binomial Asian MC rejects Americans and Hull mode accepts both."""
+
+    BINOM_STEPS = 20
+
+    @staticmethod
+    def _make_spec(exercise_type: ExerciseType) -> AsianSpec:
+        return AsianSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            option_type=OptionType.CALL,
+            strike=50.0,
+            maturity=PRICING_DATE + dt.timedelta(days=365),
+            num_observations=21,
+            currency=CURRENCY,
+            exercise_type=exercise_type,
+        )
+
+    def test_mc_european_prices(self):
+        """Binomial MC mode returns a finite price for European Asians."""
+        ud = _hull_asian_underlying()
+        spec = self._make_spec(ExerciseType.EUROPEAN)
+        params = BinomialParams(num_steps=self.BINOM_STEPS, mc_paths=10_000, random_seed=42)
+        pv = OptionValuation(ud, spec, PricingMethod.BINOMIAL, params).present_value()
+        assert np.isfinite(pv) and pv > 0.0
+
+    def test_mc_american_raises(self):
+        """Binomial MC mode raises UnsupportedFeatureError for American Asians."""
+        ud = _hull_asian_underlying()
+        spec = self._make_spec(ExerciseType.AMERICAN)
+        params = BinomialParams(num_steps=self.BINOM_STEPS, mc_paths=10_000, random_seed=42)
+        with pytest.raises(
+            UnsupportedFeatureError, match="American early exercise is not supported"
+        ):
+            OptionValuation(ud, spec, PricingMethod.BINOMIAL, params).present_value()
+
+    @pytest.mark.parametrize("exercise_type", [ExerciseType.EUROPEAN, ExerciseType.AMERICAN])
+    def test_hull_mode_accepts_both(self, exercise_type: ExerciseType):
+        """Hull representative-average mode works for both European and American."""
+        ud = _hull_asian_underlying()
+        spec = self._make_spec(exercise_type)
+        tree_avg = 2 * self.BINOM_STEPS
+        params = BinomialParams(num_steps=self.BINOM_STEPS, asian_tree_averages=tree_avg)
+        pv = OptionValuation(ud, spec, PricingMethod.BINOMIAL, params).present_value()
+        assert np.isfinite(pv) and pv > 0.0

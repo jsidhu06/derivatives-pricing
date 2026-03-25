@@ -5,7 +5,8 @@ private implementation classes that plug into OptionValuation.
 
 Current scope
 -------------
-PDE via finite differences for vanilla European and American call/put:
+PDE via finite differences for European and American options:
+- vanilla call/put and custom payoffs (PayoffSpec)
 - time stepping: implicit, explicit, or Crank–Nicolson
 - optional Rannacher smoothing for Crank–Nicolson
 - spatial grids: spot or log-spot
@@ -13,12 +14,13 @@ PDE via finite differences for vanilla European and American call/put:
 """
 
 from __future__ import annotations
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 import logging
 import math
 import datetime as dt
+import warnings
 
 import numpy as np
 
@@ -43,6 +45,7 @@ from ..exceptions import (
     UnsupportedFeatureError,
     ValidationError,
 )
+from .contracts import PayoffSpec, PayoffBoundaryModel, WingBoundary
 from .params import PDEParams
 
 if TYPE_CHECKING:
@@ -132,7 +135,7 @@ def _dividend_tau_schedule(
 
     The range is closed: ``0.0 <= tau <= ttm``.  Boundary values (tau=0 for
     maturity-date dividends, tau=ttm for pricing-date dividends) are included
-    so that ``_vanilla_fd_core`` can apply them as special-case jumps.
+    so that ``_fd_core`` can apply them as special-case jumps.
     """
     if not discrete_dividends:
         return []
@@ -180,15 +183,159 @@ def _apply_dividend_jump(
     values[:] = shifted
 
 
+# ---------------------------------------------------------------------------
+# Affine boundary-model helpers for custom-payoff boundary conditions
+# ---------------------------------------------------------------------------
+
+
+def _fit_affine_boundary_model(
+    payoff_fn: Callable,
+    *,
+    wing: str,
+    spot_samples: np.ndarray,
+) -> WingBoundary:
+    """Fit affine boundary model ``payoff(S) ~ slope * S + intercept``.
+
+    Parameters
+    ----------
+    payoff_fn
+        Vectorized payoff callable.
+    wing
+        ``"left"`` or ``"right"`` boundary label for logging.
+    spot_samples
+        Spot samples taken directly from the PDE grid near the relevant
+        boundary. Using the actual grid nodes makes the fitted affine model
+        consistent with the truncated domain the PDE solver uses.
+
+    Returns
+    -------
+    WingBoundary
+        Fitted slope / intercept pair.
+    """
+    if wing not in {"left", "right"}:
+        raise ConfigurationError(f"wing must be 'left' or 'right', got {wing!r}")
+
+    x = np.asarray(spot_samples, dtype=float)
+    if x.ndim != 1 or x.size < 3:
+        raise ConfigurationError("spot_samples must be a 1D array with at least three points")
+    if np.any(np.diff(x) <= 0.0):
+        raise ConfigurationError("spot_samples must be strictly increasing")
+
+    y = np.asarray(payoff_fn(x), dtype=float)
+
+    # Least-squares fit: y ≈ slope * x + intercept
+    A = np.column_stack([x, np.ones_like(x)])
+    slope, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
+
+    # Warn if the affine fit is poor (payoff is genuinely nonlinear on the wing).
+    residuals = y - (slope * x + intercept)
+    ss_res = float(np.dot(residuals, residuals))
+    ss_tot = float(np.dot(y - y.mean(), y - y.mean()))
+    if ss_tot > 1e-30:
+        r_squared = 1.0 - ss_res / ss_tot
+        if r_squared < 0.99:
+            logger.warning(
+                "Affine boundary fit on %s wing has R²=%.4f; boundary values "
+                "may be inaccurate. Consider providing explicit PayoffBoundaryModel.",
+                wing,
+                r_squared,
+            )
+
+    return WingBoundary(slope=float(slope), intercept=float(intercept))
+
+
+def _continuation_from_affine_boundary_model(
+    *,
+    spot: float,
+    slope: float,
+    intercept: float,
+    df_tT: float,
+    dq_tT: float,
+) -> float:
+    """Continuation value implied by an affine boundary model.
+
+    If the boundary payoff is approximated by
+
+        payoff(S_T) ~ slope * S_T + intercept
+
+    then under risk-neutral pricing:
+
+        V(S, t) ~ slope * S * dq_tT + intercept * df_tT
+
+    where *dq_tT* is the dividend discount factor and *df_tT* is the risk-free
+    discount factor from *t* to *T*.
+    """
+    return float(slope * spot * dq_tT + intercept * df_tT)
+
+
 def _boundary_values(
     *,
-    option_type: OptionType,
-    strike: float,
+    option_type: OptionType | None,
+    strike: float | None,
+    smin: float,
     smax: float,
     df_tT: float,
     dq_tT: float,
     early_exercise: bool,
+    payoff_fn: Callable | None = None,
+    payoff_boundary_model: PayoffBoundaryModel | None = None,
 ) -> tuple[float, float]:
+    """Dirichlet boundary values for PDE at S=smin (left) and S=smax (right).
+
+    For vanilla call/put, uses standard analytical asymptotic boundary
+    conditions.
+
+    For custom payoffs, uses affine wing boundary models::
+
+        payoff(S) ~ slope * S + intercept
+        => V(S, t) ~ slope * S * dq_tT + intercept * df_tT
+
+    For custom payoffs, the affine boundary wings are interpreted at the
+    actual finite grid boundaries ``smin`` and ``smax`` of the truncated PDE
+    domain rather than as true infinite-domain asymptotics.
+
+    For American exercise the boundary is
+    ``max(continuation, intrinsic)`` where intrinsic is evaluated directly
+    via the payoff callable (not the boundary model).
+    """
+    # ------------------------------------------------------------------
+    # Custom payoff branch
+    # ------------------------------------------------------------------
+    if payoff_fn is not None:
+        if payoff_boundary_model is None:
+            raise ConfigurationError(
+                "_boundary_values requires a resolved payoff_boundary_model for custom payoffs"
+            )
+
+        left_cont = _continuation_from_affine_boundary_model(
+            spot=smin,
+            slope=payoff_boundary_model.left.slope,
+            intercept=payoff_boundary_model.left.intercept,
+            df_tT=df_tT,
+            dq_tT=dq_tT,
+        )
+        right_cont = _continuation_from_affine_boundary_model(
+            spot=smax,
+            slope=payoff_boundary_model.right.slope,
+            intercept=payoff_boundary_model.right.intercept,
+            df_tT=df_tT,
+            dq_tT=dq_tT,
+        )
+
+        if early_exercise:
+            intrinsic = np.asarray(payoff_fn(np.array([smin, smax], dtype=float)), dtype=float)
+            left = max(left_cont, float(intrinsic[0]))
+            right = max(right_cont, float(intrinsic[1]))
+        else:
+            left = left_cont
+            right = right_cont
+
+        return float(left), float(right)
+
+    # ------------------------------------------------------------------
+    # Vanilla branch
+    # ------------------------------------------------------------------
+    assert option_type is not None and strike is not None
     if option_type is OptionType.PUT:
         left = strike if early_exercise else strike * df_tT
         right = 0.0
@@ -307,7 +454,7 @@ def _scaled_operator_coeffs(
 
 
 # ---------------------------------------------------------------------------
-# Time-step helpers (extracted from _vanilla_fd_core for readability)
+# Time-step helpers (extracted from _fd_core for readability)
 # ---------------------------------------------------------------------------
 
 
@@ -482,7 +629,7 @@ def _implicit_cn_step(
 
 def _validate_fd_inputs(
     *,
-    option_type: OptionType,
+    option_type: OptionType | None,
     time_to_maturity: float,
     spot_steps: int,
     time_steps: int,
@@ -494,9 +641,10 @@ def _validate_fd_inputs(
     omega: float | None,
     tol: float | None,
     max_iter: int | None,
+    payoff_fn: Callable | None = None,
 ) -> None:
     """Validate FD PDE inputs before grid construction."""
-    if option_type not in (OptionType.CALL, OptionType.PUT):
+    if payoff_fn is None and option_type not in (OptionType.CALL, OptionType.PUT):
         raise UnsupportedFeatureError("FD PDE valuation supports only vanilla CALL/PUT.")
     if time_to_maturity <= 0:
         raise ValidationError("time_to_maturity must be positive")
@@ -637,16 +785,16 @@ def _build_time_step_schedule(
     return steps
 
 
-def _vanilla_fd_core(
+def _fd_core(
     *,
     spot: float,
-    strike: float,
+    strike: float | None,
     time_to_maturity: float,
     volatility: float,
     discount_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None,
     dividend_schedule: list[tuple[float, float]] | None,
-    option_type: OptionType,
+    option_type: OptionType | None,
     smax_mult: float,
     spot_steps: int,
     time_steps: int,
@@ -658,8 +806,14 @@ def _vanilla_fd_core(
     omega: float | None = None,
     tol: float | None = None,
     max_iter: int | None = None,
+    payoff_fn: Callable | None = None,
+    payoff_boundary_model: PayoffBoundaryModel | None = None,
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
-    """Core finite-difference solver for vanilla option valuation.
+    """Core finite-difference solver for option valuation.
+
+    Supports vanilla CALL/PUT (via *option_type* and *strike*) and
+    arbitrary payoffs (via *payoff_fn*).  When *payoff_fn* is provided
+    it takes precedence and *option_type*/*strike* may be ``None``.
 
     Returns
     -------
@@ -682,9 +836,14 @@ def _vanilla_fd_core(
         omega=omega,
         tol=tol,
         max_iter=max_iter,
+        payoff_fn=payoff_fn,
     )
 
-    smax = float(smax_mult * max(spot, strike))
+    # For grid sizing, use strike when available, otherwise use spot.
+    # After the grid is built, normalize smin/smax to the ACTUAL grid
+    # boundaries so all downstream code uses a single consistent meaning.
+    ref_price = max(spot, strike) if strike is not None else spot
+    smax = float(smax_mult * ref_price)
     if space_grid is PDESpaceGrid.SPOT:
         grid = np.linspace(0.0, smax, spot_steps + 1)
         S = grid
@@ -692,7 +851,7 @@ def _vanilla_fd_core(
     else:
         grid, S, dz = _build_log_grid(
             spot=spot,
-            strike=strike,
+            strike=strike if strike is not None else spot,
             time_to_maturity=time_to_maturity,
             volatility=volatility,
             smax_mult=smax_mult,
@@ -700,13 +859,36 @@ def _vanilla_fd_core(
             time_steps=time_steps,
         )
 
+    smin = float(S[0])
+    smax = float(S[-1])
+
     j = np.arange(1, spot_steps)  # interior indices 1..M-1
 
-    # Standard terminal payoff at maturity
-    if option_type is OptionType.PUT:
+    # Terminal payoff at maturity
+    if payoff_fn is not None:
+        payoff = np.asarray(payoff_fn(S), dtype=float)
+    elif option_type is OptionType.PUT:
         payoff = np.maximum(strike - S, 0.0)
     else:
         payoff = np.maximum(S - strike, 0.0)
+
+    # Resolve affine wing boundary models once (used for boundary
+    # conditions on every time step). Prefer explicit metadata; fall back
+    # to a local affine fit on the actual PDE boundary nodes.
+    if payoff_fn is not None:
+        if payoff_boundary_model is None:
+            payoff_boundary_model = PayoffBoundaryModel(
+                left=_fit_affine_boundary_model(payoff_fn, wing="left", spot_samples=S[:4]),
+                right=_fit_affine_boundary_model(payoff_fn, wing="right", spot_samples=S[-4:]),
+            )
+        elif space_grid is PDESpaceGrid.LOG_SPOT:
+            warnings.warn(
+                "Explicit PayoffBoundaryModel with LOG_SPOT grid is interpreted as an affine "
+                "boundary model on the finite truncated PDE domain, not as a true payoff tail "
+                "asymptote. Ensure the supplied boundary model is appropriate at the actual grid "
+                "boundaries.",
+                stacklevel=2,
+            )
 
     V = payoff.copy()  # V at tau=0 (maturity)
     intrinsic = payoff if early_exercise else None
@@ -803,10 +985,13 @@ def _vanilla_fd_core(
         left, right = _boundary_values(
             option_type=option_type,
             strike=strike,
-            smax=float(S[-1]),
+            smin=smin,
+            smax=smax,
             df_tT=df_tT,
             dq_tT=dq_tT,
             early_exercise=early_exercise,
+            payoff_fn=payoff_fn,
+            payoff_boundary_model=payoff_boundary_model,
         )
 
         V_prev = V.copy()
@@ -1019,9 +1204,18 @@ class _FDValuationBase(_FDGridGreeksMixin):
         spot_steps = int(params.spot_steps)
         time_steps = int(params.time_steps)
 
-        return _vanilla_fd_core(
+        # Custom payoff support: extract payoff callable and boundary model from PayoffSpec
+        spec = self.valuation_ctx.spec
+        if isinstance(spec, PayoffSpec):
+            custom_payoff = spec.payoff
+            custom_boundary_model = spec.boundary_model
+        else:
+            custom_payoff = None
+            custom_boundary_model = None
+
+        return _fd_core(
             spot=spot,
-            strike=float(strike),
+            strike=float(strike) if strike is not None else None,
             time_to_maturity=float(time_to_maturity),
             volatility=volatility,
             discount_curve=discount_curve,
@@ -1041,6 +1235,8 @@ class _FDValuationBase(_FDGridGreeksMixin):
             omega=float(params.omega) if self._early_exercise else None,
             tol=float(params.tol) if self._early_exercise else None,
             max_iter=int(params.max_iter) if self._early_exercise else None,
+            payoff_fn=custom_payoff,
+            payoff_boundary_model=custom_boundary_model,
         )
 
     def present_value(self) -> float:

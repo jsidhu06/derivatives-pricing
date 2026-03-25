@@ -8,7 +8,7 @@ except PackageNotFoundError:
     __version__ = "0+unknown"
 
 from .exceptions import (
-    DerivativesAnalyticsError,
+    DerivativesPricingError,
     ValidationError,
     ConfigurationError,
     UnsupportedFeatureError,
@@ -45,7 +45,10 @@ from .valuation import (
     VanillaSpec,
     OptionValuation,
     UnderlyingData,
+    as_underlying_data,
     PayoffSpec,
+    PayoffBoundaryModel,
+    WingBoundary,
     AsianSpec,
     MonteCarloParams,
     BinomialParams,
@@ -82,7 +85,10 @@ __all__ = [
     "VanillaSpec",
     "OptionValuation",
     "UnderlyingData",
+    "as_underlying_data",
     "PayoffSpec",
+    "PayoffBoundaryModel",
+    "WingBoundary",
     "AsianSpec",
     "MonteCarloParams",
     "BinomialParams",
@@ -90,7 +96,7 @@ __all__ = [
     "ImpliedVolResult",
     "implied_volatility",
     # Exceptions
-    "DerivativesAnalyticsError",
+    "DerivativesPricingError",
     "ValidationError",
     "ConfigurationError",
     "UnsupportedFeatureError",

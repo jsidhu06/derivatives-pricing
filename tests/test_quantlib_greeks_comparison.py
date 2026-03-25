@@ -2,8 +2,8 @@
 
 Sections
 --------
-1. Vanilla European Greeks: PA engines vs QuantLib (broad scenarios)
-2. Vanilla American Greeks: PA engines vs QuantLib FD (broad scenarios)
+1. Vanilla European Greeks: DP engines vs QuantLib (broad scenarios)
+2. Vanilla American Greeks: DP engines vs QuantLib FD (broad scenarios)
 3. European Asian MC numerical Greeks vs QuantLib
 """
 
@@ -61,17 +61,17 @@ logger = logging.getLogger(__name__)
 
 
 def _ql_dcc(dcc: DayCountConvention):
-    """Map a PA DayCountConvention to the corresponding QuantLib DayCounter."""
+    """Map a DP DayCountConvention to the corresponding QuantLib DayCounter."""
     if dcc is DayCountConvention.ACT_360:
         return ql.Actual360()
     return ql.Actual365Fixed()
 
 
-# Convention mapping: QL → PA
+# Convention mapping: QL → DP
 # delta, gamma: same
-# vega: QL per 100% vol → /100 to match PA per 1 vol-pt
-# theta: QL per year → /365 to match PA per day
-# rho: QL per 100% rate → /100 to match PA per 1%
+# vega: QL per 100% vol → /100 to match DP per 1 vol-pt
+# theta: QL per year → /365 to match DP per day
+# rho: QL per 100% rate → /100 to match DP per 1%
 
 _QL_SCALE = {"delta": 1.0, "gamma": 1.0, "vega": 1 / 100, "theta": 1 / 365, "rho": 1 / 100}
 
@@ -337,13 +337,13 @@ def _ql_scaled_greeks(
 
 
 # Convention conversions (QuantLib → derivatives_pricing):
-#   vega:  QL returns d(V)/d(σ);  PA returns d(V)/d(σ)/100  (per 1 vol-pt)
-#   theta: QL returns d(V)/d(t) per year; PA returns per calendar day (/365)
-#   rho:   QL returns d(V)/d(r);  PA returns d(V)/d(r)/100 (per 1% rate)
+#   vega:  QL returns d(V)/d(σ);  DP returns d(V)/d(σ)/100  (per 1 vol-pt)
+#   theta: QL returns d(V)/d(t) per year; DP returns per calendar day (/365)
+#   rho:   QL returns d(V)/d(r);  DP returns d(V)/d(r)/100 (per 1% rate)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 1. Vanilla European Greeks: PA engines vs QuantLib (broad scenarios)
+# 1. Vanilla European Greeks: DP engines vs QuantLib (broad scenarios)
 # ═══════════════════════════════════════════════════════════════════════
 
 _EU_VANILLA_SCENARIOS = [
@@ -429,7 +429,7 @@ def _resolve_curve(
 def test_vanilla_european_greeks_vs_quantlib(
     spot, strike, option_type, rate_kind, div_kind, dcc, engine, tols
 ):
-    """PA vanilla European Greeks align with QuantLib across flat/non-flat curve scenarios."""
+    """DP vanilla European Greeks align with QuantLib across flat/non-flat curve scenarios."""
     r_curve = _resolve_curve(rate_kind, is_dividend=False, dcc=dcc)
     q_curve = _resolve_curve(div_kind, is_dividend=True, dcc=dcc)
 
@@ -464,7 +464,7 @@ def test_vanilla_european_greeks_vs_quantlib(
     )
 
     ql_values = _ql_scaled_greeks(ql_opt, allow_missing=False)
-    pa_values = {
+    dp_values = {
         "delta": ov.delta(),
         "gamma": ov.gamma(),
         "vega": ov.vega(),
@@ -473,11 +473,11 @@ def test_vanilla_european_greeks_vs_quantlib(
     }
 
     assert_greeks_close(
-        lhs=pa_values,
+        lhs=dp_values,
         rhs=ql_values,
         tols=tols,
         log_prefix=f"{engine.name} EU {option_type.value} S={spot:.0f} K={strike:.0f} {dcc.value}",
-        lhs_name="PA",
+        lhs_name="DP",
         rhs_name="QL",
         skip_missing_rhs=False,
         logger=logger,
@@ -485,7 +485,7 @@ def test_vanilla_european_greeks_vs_quantlib(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 2. Vanilla American Greeks: PA engines vs QuantLib FD (broad scenarios)
+# 2. Vanilla American Greeks: DP engines vs QuantLib FD (broad scenarios)
 # ═══════════════════════════════════════════════════════════════════════
 
 _AM_VANILLA_SCENARIOS = [
@@ -562,7 +562,7 @@ def test_vanilla_american_greeks_vs_quantlib(
     engine,
     tols,
 ):
-    """PA vanilla American Greeks align with QuantLib FD for broad curve/dividend scenarios."""
+    """DP vanilla American Greeks align with QuantLib FD for broad curve/dividend scenarios."""
     r_curve = _resolve_curve(rate_kind, is_dividend=False, dcc=dcc)
     q_curve = _resolve_curve(div_kind, is_dividend=True, dcc=dcc)
 
@@ -588,7 +588,7 @@ def test_vanilla_american_greeks_vs_quantlib(
         dcc=dcc,
     )
 
-    pa_values = {
+    dp_values = {
         "delta": ov.delta(),
         "gamma": ov.gamma(),
         "vega": ov.vega(),
@@ -597,11 +597,11 @@ def test_vanilla_american_greeks_vs_quantlib(
     }
     ql_values = _ql_scaled_greeks(ql_opt, allow_missing=True)
     assert_greeks_close(
-        lhs=pa_values,
+        lhs=dp_values,
         rhs=ql_values,
         tols=tols,
         log_prefix=f"{engine.name} AM {option_type.value} S={spot:.0f} K={strike:.0f} {dcc.value}",
-        lhs_name="PA",
+        lhs_name="DP",
         rhs_name="QL",
         skip_missing_rhs=True,
         atol=1e-4,
@@ -681,7 +681,7 @@ def _ql_asian_greeks(
     return result
 
 
-def _pa_asian_mc_greeks(
+def _dp_asian_mc_greeks(
     *,
     option_type: OptionType,
     averaging: AsianAveraging,
@@ -716,6 +716,45 @@ def _pa_asian_mc_greeks(
         PricingMethod.MONTE_CARLO,
         params=MonteCarloParams(random_seed=42),
     )
+    return {
+        "npv": ov.present_value(),
+        "delta": ov.delta(),
+        "gamma": ov.gamma(),
+        "vega": ov.vega(),
+        "theta": ov.theta(),
+        "rho": ov.rho(),
+    }
+
+
+def _dp_asian_analytical_greeks(
+    *,
+    option_type: OptionType,
+    averaging: AsianAveraging,
+    strike: float,
+    spot: float,
+    vol: float,
+    risk_free_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
+) -> dict[str, float]:
+    """Build our analytical (BSM) Asian and compute numerical Greeks."""
+    md = MarketData(PRICING_DATE, risk_free_curve, currency=CURRENCY, day_count_convention=dcc)
+    underlying = UnderlyingData(
+        initial_value=spot,
+        volatility=vol,
+        market_data=md,
+        dividend_curve=dividend_curve,
+    )
+    spec = AsianSpec(
+        averaging=averaging,
+        option_type=option_type,
+        strike=strike,
+        maturity=MATURITY,
+        currency=CURRENCY,
+        fixing_dates=_ASIAN_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
+    )
+    ov = OptionValuation(underlying, spec, PricingMethod.BSM)
     return {
         "npv": ov.present_value(),
         "delta": ov.delta(),
@@ -805,7 +844,17 @@ def test_asian_mc_greeks_vs_quantlib(
         dividend_curve=q_curve,
         dcc=dcc,
     )
-    pa_greeks = _pa_asian_mc_greeks(
+    dp_greeks = _dp_asian_mc_greeks(
+        option_type=option_type,
+        averaging=averaging,
+        strike=strike,
+        spot=spot,
+        vol=vol,
+        risk_free_curve=r_curve,
+        dividend_curve=q_curve,
+        dcc=dcc,
+    )
+    dp_an_greeks = _dp_asian_analytical_greeks(
         option_type=option_type,
         averaging=averaging,
         strike=strike,
@@ -817,24 +866,32 @@ def test_asian_mc_greeks_vs_quantlib(
     )
 
     # Tolerances: MC numerical bump-and-revalue vs analytic/TW
-    tols = {"delta": 0.03, "gamma": 0.10, "vega": 0.05, "theta": 0.10, "rho": 0.10}
+    mc_tols = {"delta": 0.03, "gamma": 0.10, "vega": 0.05, "theta": 0.10, "rho": 0.10}
+    # Analytical bump-and-revalue vs QL analytic/TW.  Match MC tolerances —
+    # QL's own geometric analytic engine has limitations with non-flat curves
+    an_tols = {"delta": 0.03, "gamma": 0.10, "vega": 0.05, "theta": 0.10, "rho": 0.10}
 
     for greek in ("delta", "gamma", "vega", "theta", "rho"):
         ql_val = ql_greeks[greek]
         if ql_val is None:
             continue  # TW engine doesn't provide this greek
-        pa_val = pa_greeks[greek]
+        dp_val = dp_greeks[greek]
+        dp_an_val = dp_an_greeks[greek]
         ql_scaled = ql_val * _QL_SCALE[greek]
         logger.info(
-            "Asian %s %s %s S=%.0f K=%.0f | PA=%.6f QL=%.6f",
+            "Asian %s %s %s S=%.0f K=%.0f | DP_MC=%.6f DP_AN=%.6f QL=%.6f",
             averaging.value,
             option_type.value,
             greek,
             spot,
             strike,
-            pa_val,
+            dp_val,
+            dp_an_val,
             ql_scaled,
         )
-        assert np.isclose(pa_val, ql_scaled, rtol=tols[greek], atol=1e-4), (
-            f"{greek}: PA {pa_val:.6f} vs QL {ql_scaled:.6f}"
+        assert np.isclose(dp_val, ql_scaled, rtol=mc_tols[greek], atol=1e-4), (
+            f"{greek}: DP_MC {dp_val:.6f} vs QL {ql_scaled:.6f}"
+        )
+        assert np.isclose(dp_an_val, ql_scaled, rtol=an_tols[greek], atol=1e-4), (
+            f"{greek}: DP_AN {dp_an_val:.6f} vs QL {ql_scaled:.6f}"
         )

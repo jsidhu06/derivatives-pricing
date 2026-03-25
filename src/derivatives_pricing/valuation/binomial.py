@@ -231,7 +231,7 @@ class _BinomialValuationBase:
         return option_lattice
 
     # ------------------------------------------------------------------
-    # Tree Greeks (Hull Ch. 13)
+    # Tree Greeks (Hull Ch. 21)
     # ------------------------------------------------------------------
 
     def _tree_greeks_data(self) -> tuple[np.ndarray, np.ndarray, float]:
@@ -257,7 +257,7 @@ class _BinomialValuationBase:
         return option_lattice, spot_lattice, dt
 
     def delta(self) -> float:
-        """Extract delta from the binomial tree (Hull Ch. 13).
+        """Extract delta from the binomial tree (Hull Ch. 21).
 
         .. math::
 
@@ -270,7 +270,7 @@ class _BinomialValuationBase:
         return float((f[0, 1] - f[1, 1]) / (S[0, 1] - S[1, 1]))
 
     def gamma(self) -> float:
-        """Extract gamma from the binomial tree (Hull Ch. 13).
+        """Extract gamma from the binomial tree (Hull Ch. 21).
 
         Uses the three nodes at step 2:
 
@@ -291,7 +291,7 @@ class _BinomialValuationBase:
         return float((delta_up - delta_down) / h)
 
     def theta(self) -> float:
-        """Extract theta from the binomial tree (Hull Ch. 13).
+        """Extract theta from the binomial tree (Hull Ch. 21).
 
         .. math::
 
@@ -367,8 +367,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         mapped: list[int] = []
         for d in fixing_dates:
             idx = int(np.argmin(np.abs(tree_seconds - d.timestamp())))
-            if not mapped or idx != mapped[-1]:
-                mapped.append(idx)
+            mapped.append(idx)
 
         if not mapped:
             raise ValidationError("No valid Asian observation nodes mapped to the binomial tree.")
@@ -382,6 +381,13 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         np.ndarray
             Discounted pathwise payoffs.
         """
+        if self.valuation_ctx.spec.exercise_type is ExerciseType.AMERICAN:
+            raise UnsupportedFeatureError(
+                "American early exercise is not supported for binomial Asian MC. "
+                "Use Hull representative-average mode instead. Specify asian_tree_averages and "
+                "set mc_paths to None in BinomialParams."
+            )
+
         num_steps = int(self.binom_params.num_steps)
         logger.debug(
             "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
@@ -592,9 +598,12 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         obs_count_now = int(np.searchsorted(observation_indices, t, side="right"))
         obs_so_far = n1 + obs_count_now
         obs_count_next = int(np.searchsorted(observation_indices, t + 1, side="right"))
-        if obs_count_next > obs_count_now:
-            avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)  # (k, t+1)
-            avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)  # (k, t+1)
+        new_obs = obs_count_next - obs_count_now
+        if new_obs > 0:
+            avg_up = (obs_so_far * grid_here + new_obs * s_up) / (obs_so_far + new_obs)  # (k, t+1)
+            avg_down = (obs_so_far * grid_here + new_obs * s_down) / (
+                obs_so_far + new_obs
+            )  # (k, t+1)
             return avg_up, avg_down
         return grid_here, grid_here
 
@@ -786,11 +795,20 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             continuation = discount_factors[t] * (p[t] * v_up + (1.0 - p[t]) * v_down)  # (k, t+1)
 
             if is_american:
-                exercise_avg = grid_here
-                if averaging is AsianAveraging.GEOMETRIC:
-                    exercise_avg = np.exp(exercise_avg)
-                exercise = self._average_payoff(exercise_avg)
-                values[:, rows, t] = np.maximum(continuation, exercise)
+                # Early exercise is only meaningful once at least one fixing
+                # observation has been recorded; before that the running average
+                # is undefined (avg_grid is zero-initialised) and would produce
+                # a spurious intrinsic value.
+                obs_count = int(np.searchsorted(observation_indices, t, side="right"))
+                total_obs = n1 + obs_count
+                if total_obs > 0:
+                    exercise_avg = grid_here
+                    if averaging is AsianAveraging.GEOMETRIC:
+                        exercise_avg = np.exp(exercise_avg)
+                    exercise = self._average_payoff(exercise_avg)
+                    values[:, rows, t] = np.maximum(continuation, exercise)
+                else:
+                    values[:, rows, t] = continuation
             else:
                 values[:, rows, t] = continuation
 

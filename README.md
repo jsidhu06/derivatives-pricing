@@ -6,7 +6,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/derivatives_pricing)](https://pypi.org/project/derivatives-pricing/)
 
 A Python package for options pricing and Greeks computation, with a unified API
-across analytical, tree, PDE, and Monte Carlo methods.
+across analytical, binomial tree, PDE, and Monte Carlo methods.
 
 Built for teaching, research, and production-adjacent workflows.
 
@@ -21,7 +21,7 @@ Built for teaching, research, and production-adjacent workflows.
 | **Method** | **European** | **American** | **European** | **American** | **European** | **American** |
 | BSM | ✅ | — | ✅ | — | — | — |
 | Binomial | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| PDE | ✅ | ✅ | — | — | — | — |
+| PDE | ✅ | ✅ | — | — | ✅ | ✅ |
 | Monte Carlo | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 **Method details:** BSM uses closed-form Black-Scholes-Merton; Binomial uses Cox-Ross-Rubinstein trees;
@@ -59,6 +59,7 @@ Install from PyPI:
 
 ```bash
 pip install derivatives-pricing
+# or pip install derivatives-pricing[numba] for optional PDE solver acceleration
 ```
 
 For development:
@@ -104,7 +105,7 @@ The repo includes two companion directories:
 - **`examples/`** — concise notebooks showing how to call the public API for each feature
   (European options, Americans, PDE, Asian, Greeks, jump diffusion, discount curves).
 - **`tutorials/`** — deeper walkthroughs that teach the theory behind each pricing method
-  (binomial trees, finite differences, Monte Carlo, Asian averaging).
+  (BSM, binomial trees, finite differences, Monte Carlo, Asian averaging).
   Tutorials may access private/internal classes for demonstration purposes.
 
 ## Tests
@@ -138,13 +139,16 @@ examples/                     # API usage notebooks
 tutorials/                    # Theory deep-dive notebooks
 ```
 
+## Roadmap
+
+Planned: barrier options, stochastic volatility models.
+
+Found a bug or have a feature request? [Open an issue](https://github.com/jsidhu06/derivatives-pricing/issues).
+
 ## Disclaimer
 
-This library is provided for educational, research, and exploratory use.
-While care has been taken in implementation and testing, it has not undergone
-the independent audit or regulatory validation expected of production trading
-systems. Users are responsible for verifying results before use in financial
-decision-making.
+This pricing library is provided as-is. Users are responsible for
+independently verifying any results before relying on them.
 
 ## License
 

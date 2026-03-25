@@ -202,6 +202,31 @@ class UnderlyingData:
         return dc_replace(self, **kwargs)  # type: ignore[arg-type]
 
 
+def as_underlying_data(process: GBMProcess | UnderlyingData) -> UnderlyingData:
+    """Convert a GBMProcess to an UnderlyingData instance.
+
+    If *process* is already an ``UnderlyingData``, it is returned unchanged.
+    This is useful when you have a Monte-Carlo process but need to run a
+    deterministic method (BSM, binomial, PDE) that requires ``UnderlyingData``.
+
+    Only ``GBMProcess`` is accepted — converting jump-diffusion or
+    mean-reverting processes would silently discard non-GBM parameters.
+    """
+    if isinstance(process, UnderlyingData):
+        return process
+    if isinstance(process, GBMProcess):
+        return UnderlyingData(
+            initial_value=process.initial_value,
+            volatility=process.volatility,
+            market_data=process.market_data,
+            dividend_curve=process.dividend_curve,
+            discrete_dividends=process.discrete_dividends or None,
+        )
+    raise ConfigurationError(
+        f"Expected UnderlyingData or GBMProcess, got {type(process).__name__}."
+    )
+
+
 class OptionValuation:
     """Single-factor option valuation facade and dispatcher.
     Instances are effectively immutable once created — constructor arguments are exposed as
@@ -246,10 +271,7 @@ class OptionValuation:
             )
 
         # Strategy guardrails
-        if pricing_method in (
-            PricingMethod.BSM,
-            PricingMethod.PDE_FD,
-        ) and self._option_type not in (
+        if pricing_method is PricingMethod.BSM and self._option_type not in (
             OptionType.CALL,
             OptionType.PUT,
         ):
@@ -342,6 +364,7 @@ class OptionValuation:
 
     def delta(
         self,
+        *,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
@@ -388,6 +411,7 @@ class OptionValuation:
 
     def gamma(
         self,
+        *,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
@@ -437,6 +461,7 @@ class OptionValuation:
 
     def vega(
         self,
+        *,
         epsilon: float = 0.01,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
@@ -480,8 +505,9 @@ class OptionValuation:
 
     def theta(
         self,
-        greek_calc_method: GreekCalculationMethod | None = None,
+        *,
         time_bump_days: float = 1.0,
+        greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
         """Compute option theta.
 
@@ -533,8 +559,9 @@ class OptionValuation:
 
     def rho(
         self,
-        greek_calc_method: GreekCalculationMethod | None = None,
+        *,
         rate_bump: float = 0.01,
+        greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
         """Compute option rho.
 
@@ -812,16 +839,8 @@ class OptionValuation:
         return base_pv + (euro_bsm - euro_num)
 
     def _as_underlying_data(self) -> UnderlyingData:
-        """Return an UnderlyingData instance, extracting from PathSimulation if needed."""
-        if isinstance(self._underlying, PathSimulation):
-            return UnderlyingData(
-                initial_value=self._underlying.initial_value,
-                volatility=self._underlying.volatility,
-                market_data=self._underlying.market_data,
-                dividend_curve=self._underlying.dividend_curve,
-                discrete_dividends=self._underlying.discrete_dividends or None,
-            )
-        return self._underlying
+        """Return an UnderlyingData instance, extracting from GBMProcess if needed."""
+        return as_underlying_data(self._underlying)  # type: ignore[arg-type]
 
     def _apply_asian_control_variate(self, base_pv: float) -> float:
         """Apply Asian-option European control-variate adjustment.
