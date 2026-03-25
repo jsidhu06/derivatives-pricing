@@ -839,16 +839,8 @@ class OptionValuation:
         return base_pv + (euro_bsm - euro_num)
 
     def _as_underlying_data(self) -> UnderlyingData:
-        """Return an UnderlyingData instance, extracting from PathSimulation if needed."""
-        if isinstance(self._underlying, PathSimulation):
-            return UnderlyingData(
-                initial_value=self._underlying.initial_value,
-                volatility=self._underlying.volatility,
-                market_data=self._underlying.market_data,
-                dividend_curve=self._underlying.dividend_curve,
-                discrete_dividends=self._underlying.discrete_dividends or None,
-            )
-        return self._underlying
+        """Return an UnderlyingData instance, extracting from GBMProcess if needed."""
+        return as_underlying_data(self._underlying)
 
     def _apply_asian_control_variate(self, base_pv: float) -> float:
         """Apply Asian-option European control-variate adjustment.
