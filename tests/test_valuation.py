@@ -17,6 +17,7 @@ from derivatives_pricing.valuation import (
     BinomialParams,
     MonteCarloParams,
     PDEParams,
+    as_underlying_data,
 )
 from derivatives_pricing.valuation.bsm import _BSMEuropeanValuation
 from derivatives_pricing.valuation.binomial import (
@@ -34,6 +35,10 @@ from derivatives_pricing.utils import calculate_year_fraction
 from derivatives_pricing.stochastic_processes import (
     GBMProcess,
     GBMParams,
+    JDProcess,
+    JDParams,
+    SRDProcess,
+    SRDParams,
     SimulationConfig,
 )
 from derivatives_pricing.market_environment import MarketData
@@ -1136,3 +1141,65 @@ class TestDayCountConventionMonotonicity:
             f"ACT/360 {pv_hi:.6f} should exceed ACT/365F {pv_lo:.6f} "
             f"({method.name} {exercise_type.value} {option_type.value})"
         )
+
+
+class TestAsUnderlyingData:
+    """Tests for the as_underlying_data conversion function."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        self.md = MarketData(
+            dt.datetime(2025, 1, 1),
+            DiscountCurve.flat(0.05, end_time=1.0),
+            currency="USD",
+        )
+        self.sim_cfg = SimulationConfig(paths=1_000, end_date=dt.datetime(2026, 1, 1), num_steps=10)
+
+    def test_gbm_attributes_preserved(self) -> None:
+        """Converted UnderlyingData retains all GBM attributes."""
+        div_curve = DiscountCurve.flat(0.02, end_time=1.0)
+        divs = [(dt.datetime(2025, 6, 1), 1.50)]
+        gbm = GBMProcess(
+            self.md,
+            GBMParams(
+                initial_value=100.0,
+                volatility=0.25,
+                dividend_curve=div_curve,
+                discrete_dividends=divs,
+            ),
+            self.sim_cfg,
+        )
+        ud = as_underlying_data(gbm)
+
+        assert isinstance(ud, UnderlyingData)
+        assert ud.initial_value == gbm.initial_value
+        assert ud.volatility == gbm.volatility
+        assert ud.market_data is gbm.market_data
+        assert ud.dividend_curve is gbm.dividend_curve
+        assert ud.discrete_dividends == tuple(divs)
+
+    def test_underlying_data_passthrough(self) -> None:
+        """UnderlyingData input is returned unchanged."""
+        ud = UnderlyingData(initial_value=100.0, volatility=0.25, market_data=self.md)
+        result = as_underlying_data(ud)
+        assert result is ud
+
+    def test_rejects_jd_process(self) -> None:
+        """JDProcess must be rejected — jump parameters would be silently lost."""
+        jd = JDProcess(
+            self.md,
+            JDParams(initial_value=100.0, volatility=0.25, lambd=0.5, mu=-0.1, delta=0.2),
+            self.sim_cfg,
+        )
+        with pytest.raises(ConfigurationError, match="GBMProcess"):
+            as_underlying_data(jd)
+
+    def test_rejects_srd_process(self) -> None:
+        """SRDProcess must be rejected — mean-reversion parameters would be silently lost."""
+        srd = SRDProcess(
+            self.md,
+            SRDParams(initial_value=0.04, volatility=0.1, kappa=2.0, theta=0.04),
+            self.sim_cfg,
+        )
+        with pytest.raises(ConfigurationError, match="GBMProcess"):
+            as_underlying_data(srd)
