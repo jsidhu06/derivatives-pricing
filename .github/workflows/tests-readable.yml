@@ -1,0 +1,38 @@
+name: tests-readable
+# On-demand only.  Runs the same test suite as the dev-locked CI job
+# but serially (no pytest-xdist) so the log output is alphabetically
+# ordered and easy to scan in the Actions tab.  No coverage upload.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to test (branch, tag, or SHA). Leave blank for the selected/default ref."
+        required: false
+        default: ""
+
+concurrency:
+  group: tests-readable-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (readable logs, serial)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (locked dev toolchain)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements/dev.txt
+          python -m pip install -e . --no-deps
+
+      - name: Pytest (serial, readable logs)
+        run: pytest -v --runslow --log-cli-level=INFO

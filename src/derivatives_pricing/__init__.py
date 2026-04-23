@@ -40,6 +40,10 @@ from .enums import (
     AsianAveraging,
     GreekCalculationMethod,
     ImpliedVolMethod,
+    BarrierDirection,
+    BarrierAction,
+    BarrierMonitoring,
+    RebateTiming,
 )
 from .valuation import (
     VanillaSpec,
@@ -50,6 +54,7 @@ from .valuation import (
     PayoffBoundaryModel,
     WingBoundary,
     AsianSpec,
+    BarrierSpec,
     MonteCarloParams,
     BinomialParams,
     PDEParams,
@@ -81,6 +86,10 @@ __all__ = [
     "AsianAveraging",
     "GreekCalculationMethod",
     "ImpliedVolMethod",
+    "BarrierDirection",
+    "BarrierAction",
+    "BarrierMonitoring",
+    "RebateTiming",
     # Valuation
     "VanillaSpec",
     "OptionValuation",
@@ -90,6 +99,7 @@ __all__ = [
     "PayoffBoundaryModel",
     "WingBoundary",
     "AsianSpec",
+    "BarrierSpec",
     "MonteCarloParams",
     "BinomialParams",
     "PDEParams",

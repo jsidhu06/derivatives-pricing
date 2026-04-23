@@ -4,7 +4,7 @@ import warnings
 
 import pytest
 
-from derivatives_pricing.enums import PDEMethod
+from derivatives_pricing.enums import PDEMethod, PDESpaceGrid
 from derivatives_pricing.exceptions import ValidationError
 from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
@@ -20,6 +20,7 @@ class TestMonteCarloParams:
         assert p.deg == 3
         assert p.ridge_lambda == 1e-8
         assert p.min_itm == 25
+        assert p.barrier_aware_basis is True
 
     def test_rejects_deg_below_1(self):
         with pytest.raises(ValidationError, match="deg must be >= 1"):
@@ -44,6 +45,20 @@ class TestMonteCarloParams:
     def test_none_std_error_warn_ratio_accepted(self):
         p = MonteCarloParams(std_error_warn_ratio=None)
         assert p.std_error_warn_ratio is None
+
+    def test_rejects_non_bool_barrier_aware_basis(self):
+        with pytest.raises(ValidationError, match="barrier_aware_basis must be a bool"):
+            MonteCarloParams(barrier_aware_basis=1)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("field,value", [("deg", 3.0), ("min_itm", 25.0)])
+    def test_rejects_float_for_int_fields(self, field, value):
+        with pytest.raises(ValidationError, match=f"{field} must be an int"):
+            MonteCarloParams(**{field: value})
+
+    @pytest.mark.parametrize("field,value", [("deg", True), ("min_itm", False)])
+    def test_rejects_bool_for_int_fields(self, field, value):
+        with pytest.raises(ValidationError, match=f"{field} must be an int"):
+            MonteCarloParams(**{field: value})
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +106,18 @@ class TestBinomialParams:
             warnings.simplefilter("always")
             BinomialParams(num_steps=10_000, asian_tree_averages=10_000)
         assert any("GiB" in str(warning.message) for warning in w)
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [("num_steps", 500.0), ("mc_paths", 1000.0), ("asian_tree_averages", 100.0)],
+    )
+    def test_rejects_float_for_int_fields(self, field, value):
+        with pytest.raises(ValidationError, match=f"{field} must be an int"):
+            BinomialParams(**{field: value})
+
+    def test_rejects_bool_for_num_steps(self):
+        with pytest.raises(ValidationError, match="num_steps must be an int"):
+            BinomialParams(num_steps=True)
 
 
 # ---------------------------------------------------------------------------
@@ -145,3 +172,39 @@ class TestPDEParams:
     def test_rejects_bad_american_solver_type(self):
         with pytest.raises(ValidationError, match="american_solver must be a PDEEarlyExercise"):
             PDEParams(american_solver="intrinsic")
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("spot_steps", 200.0),
+            ("time_steps", 200.0),
+            ("max_iter", 100.0),
+            ("rannacher_steps", 2.0),
+        ],
+    )
+    def test_rejects_float_for_int_fields(self, field, value):
+        with pytest.raises(ValidationError, match=f"{field} must be an int"):
+            PDEParams(**{field: value})
+
+    def test_rejects_bool_for_spot_steps(self):
+        with pytest.raises(ValidationError, match="spot_steps must be an int"):
+            PDEParams(spot_steps=True)
+
+    def test_for_barriers_defaults(self):
+        p = PDEParams.for_barriers()
+        assert p.spot_steps == 1200
+        assert p.time_steps == 800
+        assert p.space_grid is PDESpaceGrid.LOG_SPOT
+        assert p.method is PDEMethod.CRANK_NICOLSON
+        assert p.control_variate_european is False
+
+    def test_for_barriers_with_overrides(self):
+        p = PDEParams.for_barriers(log_timings=True, control_variate_european=True)
+        assert p.spot_steps == 1200
+        assert p.time_steps == 800
+        assert p.log_timings is True
+        assert p.control_variate_european is True
+
+    def test_for_barriers_rejects_invalid_override(self):
+        with pytest.raises(ValidationError, match="spot_steps must be >= 3"):
+            PDEParams.for_barriers(spot_steps=2)
