@@ -19,10 +19,13 @@ import pytest
 
 from derivatives_pricing.enums import (
     AsianAveraging,
+    BarrierAction,
+    BarrierDirection,
     DayCountConvention,
     ExerciseType,
     OptionType,
     PricingMethod,
+    RebateTiming,
 )
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.rates import DiscountCurve
@@ -34,6 +37,7 @@ from helpers import (
 )
 from derivatives_pricing.valuation import (
     AsianSpec,
+    BarrierSpec,
     VanillaSpec,
     OptionValuation,
     UnderlyingData,
@@ -312,7 +316,10 @@ def _ql_american_fd_option(
     return option
 
 
-def _ql_greek(option: "ql_typing.VanillaOption", greek: str) -> float | None:
+def _ql_greek(
+    option: "ql_typing.VanillaOption | ql_typing.BarrierOption",
+    greek: str,
+) -> float | None:
     """Return a QuantLib greek when available, else ``None``."""
     try:
         return float(getattr(option, greek)())
@@ -321,7 +328,7 @@ def _ql_greek(option: "ql_typing.VanillaOption", greek: str) -> float | None:
 
 
 def _ql_scaled_greeks(
-    option: "ql_typing.VanillaOption",
+    option: "ql_typing.VanillaOption | ql_typing.BarrierOption",
     *,
     allow_missing: bool,
 ) -> dict[str, float | None]:
@@ -895,3 +902,773 @@ def test_asian_mc_greeks_vs_quantlib(
         assert np.isclose(dp_an_val, ql_scaled, rtol=an_tols[greek], atol=1e-4), (
             f"{greek}: DP_AN {dp_an_val:.6f} vs QL {ql_scaled:.6f}"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. European Barrier Greeks: DP numerical vs QuantLib bump-and-revalue
+# ═══════════════════════════════════════════════════════════════════════════
+
+_BARRIER_SPOT = 100.0
+_BARRIER_VOL = 0.25
+_BARRIER_RATE = 0.05
+_BARRIER_DIV = 0.02
+_BARRIER_NUMERICAL_SPOT_BUMP_RATIO = 0.025
+_BARRIER_PDE_CFG = PDEParams.for_barriers()
+_BARRIER_BINOM_CFG = BinomialParams(num_steps=1000)
+
+_QL_BARRIER_TYPE = {
+    (BarrierDirection.DOWN, BarrierAction.IN): ql.Barrier.DownIn,
+    (BarrierDirection.DOWN, BarrierAction.OUT): ql.Barrier.DownOut,
+    (BarrierDirection.UP, BarrierAction.IN): ql.Barrier.UpIn,
+    (BarrierDirection.UP, BarrierAction.OUT): ql.Barrier.UpOut,
+}
+
+
+def _barrier_nonflat_curves() -> tuple[DiscountCurve, DiscountCurve]:
+    """Non-flat rate and dividend curves for barrier tests."""
+    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
+    r_times = np.array([0.0, 0.25, 0.5, ttm])
+    r_forwards = np.array([0.03, 0.06, 0.04])
+    q_times = np.array([0.0, 0.25, 0.5, ttm])
+    q_forwards = np.array([0.01, 0.03, 0.005])
+    return (
+        DiscountCurve.from_forwards(times=r_times, forwards=r_forwards),
+        DiscountCurve.from_forwards(times=q_times, forwards=q_forwards),
+    )
+
+
+def _barrier_numerical_spot_bump(spot: float) -> float:
+    return float(spot) * _BARRIER_NUMERICAL_SPOT_BUMP_RATIO
+
+
+_QL_BARRIER_COMPARABLE_GREEKS: tuple[str, ...] = ("delta", "gamma", "theta")
+
+
+def _dp_barrier_greeks_from_valuation(
+    ov: OptionValuation,
+    *,
+    spot: float,
+    greeks: tuple[str, ...] = _QL_BARRIER_COMPARABLE_GREEKS,
+) -> dict[str, float]:
+    """Compute the requested barrier greeks for a valuation.
+
+    Default set is delta/gamma/theta because QL barrier engines don't
+    expose vega/rho, so computing them here is wasted compute. Vega/rho
+    for these same scenarios are cross-validated in test_greeks.py
+    (European: BSM vs PDE; American: binomial vs PDE for rho only —
+    binomial barrier vega is unavailable).
+    """
+    bump = _barrier_numerical_spot_bump(spot)
+    result: dict[str, float] = {}
+    if "delta" in greeks:
+        result["delta"] = ov.delta(epsilon=bump)
+    if "gamma" in greeks:
+        result["gamma"] = ov.gamma(epsilon=bump)
+    if "vega" in greeks:
+        result["vega"] = ov.vega()
+    if "theta" in greeks:
+        # No explicit ``time_bump_days`` — auto-select routes AN barrier to
+        # the BSM PDE identity, BN/PDE to their native tree/grid theta.
+        result["theta"] = ov.theta()
+    if "rho" in greeks:
+        result["rho"] = ov.rho()
+    return result
+
+
+def _fmt_greek_value(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.6f}"
+
+
+def _ql_barrier_option(
+    *,
+    engine: str,
+    exercise_type: ExerciseType,
+    direction: BarrierDirection,
+    action: BarrierAction,
+    barrier: float,
+    option_type: OptionType,
+    strike: float,
+    spot: float,
+    vol: float,
+    rebate: float = 0.0,
+    r_curve: DiscountCurve | None = None,
+    q_curve: DiscountCurve | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+    grid_points: int = 800,
+    time_steps: int = 800,
+    binom_steps: int = 400,
+) -> "ql_typing.BarrierOption":
+    """Build a QuantLib barrier option with the requested pricing engine.
+
+    ``discrete_dividends`` is only supported with ``engine='fd'`` —
+    QL's AnalyticBarrierEngine and BinomialCRRBarrierEngine don't accept
+    a DividendVector.
+    """
+    if discrete_dividends is not None and engine != "fd":
+        raise ValueError(
+            f"discrete_dividends is only supported with engine='fd', got engine={engine!r}"
+        )
+    eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
+    ql.Settings.instance().evaluationDate = eval_date
+    ql_dc = ql.Actual365Fixed()
+    maturity_ql = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
+    ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
+    bt = _QL_BARRIER_TYPE[(direction, action)]
+    rf = (
+        _ql_curve_handle_from_discount_curve(r_curve, eval_date=eval_date)
+        if r_curve is not None
+        else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, _BARRIER_RATE, ql_dc))
+    )
+    dv = (
+        _ql_curve_handle_from_discount_curve(q_curve, eval_date=eval_date)
+        if q_curve is not None
+        else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, _BARRIER_DIV, ql_dc))
+    )
+    vl = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(eval_date, ql.TARGET(), vol, ql_dc))
+    pr = ql.BlackScholesMertonProcess(ql.QuoteHandle(ql.SimpleQuote(spot)), dv, rf, vl)
+    payoff = ql.PlainVanillaPayoff(ql_type, strike)
+    if exercise_type is ExerciseType.AMERICAN:
+        exercise = ql.AmericanExercise(eval_date, maturity_ql)
+    else:
+        exercise = ql.EuropeanExercise(maturity_ql)
+    opt = ql.BarrierOption(bt, barrier, rebate, payoff, exercise)
+    if engine == "analytic":
+        opt.setPricingEngine(ql.AnalyticBarrierEngine(pr))
+    elif engine == "fd":
+        if discrete_dividends is not None:
+            div_vector = _ql_dividend_vector(discrete_dividends)
+            opt.setPricingEngine(
+                ql.FdBlackScholesBarrierEngine(pr, div_vector, time_steps, grid_points)
+            )
+        else:
+            opt.setPricingEngine(ql.FdBlackScholesBarrierEngine(pr, time_steps, grid_points))
+    elif engine == "binomial":
+        opt.setPricingEngine(ql.BinomialCRRBarrierEngine(pr, binom_steps))
+    else:
+        raise ValueError(f"unsupported QL barrier engine: {engine}")
+    return opt
+
+
+def _dp_barrier_greeks(
+    *,
+    pricing_method: PricingMethod,
+    params: BinomialParams | PDEParams | None = None,
+    exercise_type: ExerciseType,
+    direction: BarrierDirection,
+    action: BarrierAction,
+    barrier: float,
+    option_type: OptionType,
+    strike: float,
+    rebate: float = 0.0,
+    rebate_timing: RebateTiming = RebateTiming.AT_HIT,
+    r_curve: DiscountCurve | None = None,
+    q_curve: DiscountCurve | None = None,
+    greeks: tuple[str, ...] = _QL_BARRIER_COMPARABLE_GREEKS,
+) -> dict[str, float]:
+    """Compute the requested barrier Greeks via a selected DP pricing engine."""
+    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
+    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
+    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV, end_time=ttm)
+    md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
+    ud = UnderlyingData(
+        initial_value=_BARRIER_SPOT,
+        volatility=_BARRIER_VOL,
+        market_data=md,
+        dividend_curve=qc,
+    )
+    spec = BarrierSpec(
+        option_type=option_type,
+        exercise_type=exercise_type,
+        strike=strike,
+        maturity=MATURITY,
+        barrier=barrier,
+        direction=direction,
+        action=action,
+        rebate=rebate,
+        rebate_timing=rebate_timing,
+    )
+    ov = OptionValuation(ud, spec, pricing_method, params=params)
+    return _dp_barrier_greeks_from_valuation(ov, spot=_BARRIER_SPOT, greeks=greeks)
+
+
+_BARRIER_GREEK_SCENARIOS = [
+    # Flat curves — all 4 barrier types
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.OUT,
+        OptionType.CALL,
+        100.0,
+        85.0,
+        None,
+        None,
+        id="down_out_call_flat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.IN,
+        OptionType.CALL,
+        105.0,
+        115.0,
+        None,
+        None,
+        id="up_in_call_flat",
+    ),
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.IN,
+        OptionType.PUT,
+        100.0,
+        85.0,
+        None,
+        None,
+        id="down_in_put_flat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.OUT,
+        OptionType.PUT,
+        95.0,
+        125.0,
+        None,
+        None,
+        id="up_out_put_flat",
+    ),
+    # Non-flat curves
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.OUT,
+        OptionType.PUT,
+        105.0,
+        90.0,
+        *_barrier_nonflat_curves(),
+        id="down_out_put_nonflat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.OUT,
+        OptionType.CALL,
+        100.0,
+        120.0,
+        *_barrier_nonflat_curves(),
+        id="up_out_call_nonflat",
+    ),
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.IN,
+        OptionType.CALL,
+        95.0,
+        80.0,
+        *_barrier_nonflat_curves(),
+        id="down_in_call_nonflat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.IN,
+        OptionType.PUT,
+        100.0,
+        110.0,
+        *_barrier_nonflat_curves(),
+        id="up_in_put_nonflat",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "direction,action,option_type,strike,barrier,r_curve,q_curve",
+    _BARRIER_GREEK_SCENARIOS,
+)
+def test_european_barrier_greeks_vs_quantlib(
+    direction,
+    action,
+    option_type,
+    strike,
+    barrier,
+    r_curve,
+    q_curve,
+):
+    """European barrier Greeks: DP engines vs direct QuantLib FD Greeks."""
+    is_flat = r_curve is None
+
+    if is_flat:
+        dp_an = _dp_barrier_greeks(
+            pricing_method=PricingMethod.BSM,
+            exercise_type=ExerciseType.EUROPEAN,
+            direction=direction,
+            action=action,
+            barrier=barrier,
+            option_type=option_type,
+            strike=strike,
+            r_curve=r_curve,
+            q_curve=q_curve,
+        )
+    else:
+        dp_an = None
+
+    dp_bn = _dp_barrier_greeks(
+        pricing_method=PricingMethod.BINOMIAL,
+        params=_BARRIER_BINOM_CFG,
+        exercise_type=ExerciseType.EUROPEAN,
+        direction=direction,
+        action=action,
+        barrier=barrier,
+        option_type=option_type,
+        strike=strike,
+        r_curve=r_curve,
+        q_curve=q_curve,
+    )
+    dp_pde = _dp_barrier_greeks(
+        pricing_method=PricingMethod.PDE_FD,
+        params=_BARRIER_PDE_CFG,
+        exercise_type=ExerciseType.EUROPEAN,
+        direction=direction,
+        action=action,
+        barrier=barrier,
+        option_type=option_type,
+        strike=strike,
+        r_curve=r_curve,
+        q_curve=q_curve,
+    )
+
+    ql_ref = _ql_scaled_greeks(
+        _ql_barrier_option(
+            engine="fd",
+            exercise_type=ExerciseType.EUROPEAN,
+            direction=direction,
+            action=action,
+            barrier=barrier,
+            option_type=option_type,
+            strike=strike,
+            spot=_BARRIER_SPOT,
+            vol=_BARRIER_VOL,
+            r_curve=r_curve,
+            q_curve=q_curve,
+            grid_points=_BARRIER_PDE_CFG.spot_steps,
+            time_steps=_BARRIER_PDE_CFG.time_steps,
+        ),
+        allow_missing=True,
+    )
+
+    an_tols = {"delta": 0.01, "gamma": 0.03, "theta": 0.05}
+    binom_tols = {"delta": 0.02, "gamma": 0.10, "theta": 0.20}
+    pde_tols = {"delta": 0.01, "gamma": 0.03, "theta": 0.05}
+
+    for greek in ("delta", "gamma", "theta"):
+        if dp_an is not None:
+            logger.info(
+                "European barrier %s-%s %s %s K=%.0f H=%.0f | DP_AN=%s DP_BN=%s DP_PDE=%s QL_FD=%s",
+                direction.value,
+                action.value,
+                option_type.value,
+                greek,
+                strike,
+                barrier,
+                _fmt_greek_value(dp_an[greek]),
+                _fmt_greek_value(dp_bn[greek]),
+                _fmt_greek_value(dp_pde[greek]),
+                _fmt_greek_value(ql_ref[greek]),
+            )
+        else:
+            logger.info(
+                "European barrier %s-%s %s %s K=%.0f H=%.0f | DP_BN=%s DP_PDE=%s QL_FD=%s",
+                direction.value,
+                action.value,
+                option_type.value,
+                greek,
+                strike,
+                barrier,
+                _fmt_greek_value(dp_bn[greek]),
+                _fmt_greek_value(dp_pde[greek]),
+                _fmt_greek_value(ql_ref[greek]),
+            )
+
+    if dp_an is not None:
+        assert_greeks_close(
+            lhs=dp_an,
+            rhs=ql_ref,
+            tols=an_tols,
+            log_prefix=(
+                f"Barrier AN {direction.value}-{action.value} {option_type.value} "
+                f"K={strike:.0f} H={barrier:.0f}"
+            ),
+            lhs_name="DP_AN",
+            rhs_name="QL_FD",
+            skip_missing_rhs=True,
+            atol=5e-3,
+            logger=None,
+        )
+    assert_greeks_close(
+        lhs=dp_bn,
+        rhs=ql_ref,
+        tols=binom_tols,
+        log_prefix=f"Barrier BN {direction.value}-{action.value} {option_type.value} K={strike:.0f} H={barrier:.0f}",
+        lhs_name="DP_BN",
+        rhs_name="QL_FD",
+        skip_missing_rhs=True,
+        atol=5e-3,
+        logger=None,
+    )
+    assert_greeks_close(
+        lhs=dp_pde,
+        rhs=ql_ref,
+        tols=pde_tols,
+        log_prefix=f"Barrier PDE {direction.value}-{action.value} {option_type.value} K={strike:.0f} H={barrier:.0f}",
+        lhs_name="DP_PDE",
+        rhs_name="QL_FD",
+        skip_missing_rhs=True,
+        atol=5e-3,
+        logger=None,
+    )
+
+
+_BARRIER_AMERICAN_GREEK_SCENARIOS = [
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.OUT,
+        OptionType.CALL,
+        100.0,
+        85.0,
+        0.0,
+        RebateTiming.AT_HIT,
+        id="am_down_out_call_flat",
+    ),
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.OUT,
+        OptionType.PUT,
+        100.0,
+        85.0,
+        0.0,
+        RebateTiming.AT_HIT,
+        id="am_down_out_put_flat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.OUT,
+        OptionType.CALL,
+        100.0,
+        120.0,
+        0.0,
+        RebateTiming.AT_HIT,
+        id="am_up_out_call_flat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.OUT,
+        OptionType.PUT,
+        100.0,
+        120.0,
+        0.0,
+        RebateTiming.AT_HIT,
+        id="am_up_out_put_flat",
+    ),
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.OUT,
+        OptionType.CALL,
+        100.0,
+        85.0,
+        5.0,
+        RebateTiming.AT_HIT,
+        id="am_down_out_call_rebate",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.OUT,
+        OptionType.PUT,
+        100.0,
+        120.0,
+        5.0,
+        RebateTiming.AT_HIT,
+        id="am_up_out_put_rebate",
+    ),
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.IN,
+        OptionType.CALL,
+        100.0,
+        85.0,
+        0.0,
+        RebateTiming.AT_EXPIRY,
+        id="am_down_in_call_flat",
+    ),
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.IN,
+        OptionType.PUT,
+        100.0,
+        85.0,
+        0.0,
+        RebateTiming.AT_EXPIRY,
+        id="am_down_in_put_flat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.IN,
+        OptionType.CALL,
+        100.0,
+        120.0,
+        0.0,
+        RebateTiming.AT_EXPIRY,
+        id="am_up_in_call_flat",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.IN,
+        OptionType.PUT,
+        100.0,
+        120.0,
+        0.0,
+        RebateTiming.AT_EXPIRY,
+        id="am_up_in_put_flat",
+    ),
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.IN,
+        OptionType.CALL,
+        100.0,
+        85.0,
+        5.0,
+        RebateTiming.AT_EXPIRY,
+        id="am_down_in_call_rebate",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.IN,
+        OptionType.PUT,
+        100.0,
+        120.0,
+        5.0,
+        RebateTiming.AT_EXPIRY,
+        id="am_up_in_put_rebate",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "direction,action,option_type,strike,barrier,rebate,rebate_timing",
+    _BARRIER_AMERICAN_GREEK_SCENARIOS,
+)
+def test_american_barrier_greeks_vs_quantlib(
+    direction,
+    action,
+    option_type,
+    strike,
+    barrier,
+    rebate,
+    rebate_timing,
+):
+    """American barrier Greeks: DP binomial/PDE vs direct QuantLib binomial Greeks.
+
+    Flat scenarios only because QL's American barrier support is binomial-based and only
+    approximates non-flat term structures.
+    """
+    dp_bn = _dp_barrier_greeks(
+        pricing_method=PricingMethod.BINOMIAL,
+        params=_BARRIER_BINOM_CFG,
+        exercise_type=ExerciseType.AMERICAN,
+        direction=direction,
+        action=action,
+        barrier=barrier,
+        option_type=option_type,
+        strike=strike,
+        rebate=rebate,
+        rebate_timing=rebate_timing,
+    )
+    dp_pde = _dp_barrier_greeks(
+        pricing_method=PricingMethod.PDE_FD,
+        params=_BARRIER_PDE_CFG,
+        exercise_type=ExerciseType.AMERICAN,
+        direction=direction,
+        action=action,
+        barrier=barrier,
+        option_type=option_type,
+        strike=strike,
+        rebate=rebate,
+        rebate_timing=rebate_timing,
+    )
+    ql_ref = _ql_scaled_greeks(
+        _ql_barrier_option(
+            engine="binomial",
+            exercise_type=ExerciseType.AMERICAN,
+            direction=direction,
+            action=action,
+            barrier=barrier,
+            option_type=option_type,
+            strike=strike,
+            spot=_BARRIER_SPOT,
+            vol=_BARRIER_VOL,
+            rebate=rebate,
+            binom_steps=_BARRIER_BINOM_CFG.num_steps,
+        ),
+        allow_missing=True,
+    )
+
+    binom_tols = {"delta": 0.02, "gamma": 0.10, "theta": 0.20}
+    # PDE vs QL binomial: loose-ish because we're comparing different engines
+    # (PDE FD vs QL CRR binomial). Residual disagreement ~3-5% on delta/gamma
+    # for some scenarios is genuine cross-engine variance, not noise.
+    pde_tols = {"delta": 0.04, "gamma": 0.08, "theta": 0.10}
+
+    for greek in ("delta", "gamma", "theta"):
+        logger.info(
+            "American barrier %s-%s %s %s K=%.0f H=%.0f R=%.1f | DP_BN=%s DP_PDE=%s QL_BN=%s",
+            direction.value,
+            action.value,
+            option_type.value,
+            greek,
+            strike,
+            barrier,
+            rebate,
+            _fmt_greek_value(dp_bn[greek]),
+            _fmt_greek_value(dp_pde[greek]),
+            _fmt_greek_value(ql_ref[greek]),
+        )
+
+    assert_greeks_close(
+        lhs=dp_bn,
+        rhs=ql_ref,
+        tols=binom_tols,
+        log_prefix=(
+            f"American barrier BN {direction.value}-{action.value} {option_type.value} "
+            f"K={strike:.0f} H={barrier:.0f} R={rebate:.1f}"
+        ),
+        lhs_name="DP_BN",
+        rhs_name="QL_BN",
+        skip_missing_rhs=True,
+        atol=5e-3,
+        logger=None,
+    )
+    assert_greeks_close(
+        lhs=dp_pde,
+        rhs=ql_ref,
+        tols=pde_tols,
+        log_prefix=(
+            f"American barrier PDE {direction.value}-{action.value} {option_type.value} "
+            f"K={strike:.0f} H={barrier:.0f} R={rebate:.1f}"
+        ),
+        lhs_name="DP_PDE",
+        rhs_name="QL_BN",
+        skip_missing_rhs=True,
+        atol=5e-3,
+        logger=None,
+    )
+
+
+# ── European barrier + discrete dividends: DP PDE greeks vs QL FD native ───
+# Mirrors the PV cross-check in test_quantlib_comparison.py
+# (test_barrier_european_discrete_divs_pde_vs_quantlib) but for Greeks.
+# Uses QL's native engine-populated greeks (opt.delta/gamma/theta), which
+# FdBlackScholesBarrierEngine exposes directly from the grid.
+
+_BARRIER_DISCRETE_DIV_GREEK_SCENARIOS = [
+    pytest.param(
+        BarrierDirection.DOWN,
+        BarrierAction.OUT,
+        OptionType.CALL,
+        100.0,
+        85.0,
+        id="down_out_call",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.IN,
+        OptionType.CALL,
+        100.0,
+        120.0,
+        id="up_in_call",
+    ),
+    pytest.param(
+        BarrierDirection.UP,
+        BarrierAction.OUT,
+        OptionType.PUT,
+        100.0,
+        120.0,
+        id="up_out_put",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "direction,action,option_type,strike,barrier",
+    _BARRIER_DISCRETE_DIV_GREEK_SCENARIOS,
+)
+def test_barrier_european_discrete_divs_greeks_pde_vs_quantlib(
+    direction, action, option_type, strike, barrier
+):
+    """European barrier + discrete cash dividends: DP PDE greeks vs QL FD
+    native (engine-populated) greeks.
+
+    QL's FdBlackScholesBarrierEngine with a DividendVector exposes
+    delta/gamma/theta directly from the grid.  Pricing-date dividends are
+    skipped here because QL raises ``theta not provided`` for up-in
+    barriers whenever a dividend sits on the evaluation date (see the PV
+    test's boundary-date variant for the spot-shift workaround).  Mid-life
+    and maturity-date dividends are both supported natively.
+    """
+    discrete_divs = [
+        (PRICING_DATE + dt.timedelta(days=90), 2.0),
+        (PRICING_DATE + dt.timedelta(days=270), 2.0),
+        (MATURITY, 1.0),
+    ]
+
+    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
+    rc = DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
+    md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
+    ud = UnderlyingData(
+        initial_value=_BARRIER_SPOT,
+        volatility=_BARRIER_VOL,
+        market_data=md,
+        discrete_dividends=discrete_divs,
+    )
+    spec = BarrierSpec(
+        option_type=option_type,
+        exercise_type=ExerciseType.EUROPEAN,
+        strike=strike,
+        maturity=MATURITY,
+        barrier=barrier,
+        direction=direction,
+        action=action,
+        rebate=0.0,
+        rebate_timing=RebateTiming.AT_HIT,
+    )
+    ov = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_BARRIER_PDE_CFG)
+    dp_greeks = _dp_barrier_greeks_from_valuation(ov, spot=_BARRIER_SPOT)
+
+    # QL side — build engine once, read native greeks directly.
+    # All dividends are cash-discrete so set continuous div yield to zero.
+    opt = _ql_barrier_option(
+        engine="fd",
+        exercise_type=ExerciseType.EUROPEAN,
+        direction=direction,
+        action=action,
+        barrier=barrier,
+        option_type=option_type,
+        strike=strike,
+        spot=_BARRIER_SPOT,
+        vol=_BARRIER_VOL,
+        q_curve=DiscountCurve.flat(0.0, end_time=ttm),
+        discrete_dividends=discrete_divs,
+    )
+    opt.NPV()  # trigger Results population before reading greeks
+
+    ql_greeks = {
+        "delta": opt.delta(),
+        "gamma": opt.gamma(),
+        "theta": opt.theta() / 365.0,  # QL returns annualised theta
+    }
+
+    # Tolerances: European barriers + native greeks should agree well.
+    tols = {"delta": 0.01, "gamma": 0.02, "theta": 0.01}
+    assert_greeks_close(
+        lhs=dp_greeks,
+        rhs=ql_greeks,
+        tols=tols,
+        log_prefix=(
+            f"European barrier discrete-div {direction.value}-{action.value} "
+            f"{option_type.value} K={strike:.0f} H={barrier:.0f}"
+        ),
+        lhs_name="DP_PDE",
+        rhs_name="QL_FD",
+        atol=5e-3,
+        logger=logger,
+    )

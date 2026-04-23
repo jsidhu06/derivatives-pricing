@@ -1,9 +1,15 @@
 import datetime as dt
 import pytest
 
-from derivatives_pricing.enums import AsianAveraging, ExerciseType, OptionType
+from derivatives_pricing.enums import (
+    AsianAveraging,
+    BarrierAction,
+    BarrierDirection,
+    ExerciseType,
+    OptionType,
+)
 from derivatives_pricing.exceptions import ConfigurationError, ValidationError
-from derivatives_pricing.valuation import AsianSpec, PayoffSpec, VanillaSpec
+from derivatives_pricing.valuation import AsianSpec, BarrierSpec, PayoffSpec, VanillaSpec
 from derivatives_pricing.valuation import contracts
 
 
@@ -129,3 +135,40 @@ class TestAsianSpecValidation:
     def test_invalid_averaging_type(self):
         with pytest.raises(ConfigurationError, match="averaging"):
             AsianSpec(**self._base_kw(averaging="arithmetic"))
+
+
+class TestBarrierSpecValidation:
+    """Test BarrierSpec validation rejects invalid configurations."""
+
+    def _base_kw(self, **overrides):
+        kw = dict(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=100.0,
+            maturity=dt.datetime(2026, 1, 1),
+            barrier=120.0,
+            direction=BarrierDirection.UP,
+            action=BarrierAction.OUT,
+        )
+        kw.update(overrides)
+        return kw
+
+    def test_option_type_not_enum(self):
+        with pytest.raises(ConfigurationError, match="option_type must be OptionType"):
+            BarrierSpec(**self._base_kw(option_type="call"))
+
+    def test_exercise_type_not_enum(self):
+        with pytest.raises(ConfigurationError, match="exercise_type must be ExerciseType"):
+            BarrierSpec(**self._base_kw(exercise_type="european"))
+
+    def test_monitoring_not_enum(self):
+        with pytest.raises(ConfigurationError, match="monitoring must be BarrierMonitoring"):
+            BarrierSpec(**self._base_kw(monitoring="continuous"))
+
+    def test_rebate_timing_not_enum(self):
+        with pytest.raises(ConfigurationError, match="rebate_timing must be RebateTiming"):
+            BarrierSpec(**self._base_kw(rebate_timing="at_hit"))
+
+    def test_strike_none(self):
+        with pytest.raises(ValidationError, match="strike must be provided"):
+            BarrierSpec(**self._base_kw(strike=None))

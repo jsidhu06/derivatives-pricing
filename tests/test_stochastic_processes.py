@@ -662,3 +662,118 @@ class TestObservationDateFiltering:
         gbm = GBMProcess(self.md, self.params, sc)
         with pytest.raises(ValidationError, match=r"Time grid must start at pricing_date"):
             gbm._ensure_time_grid()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Standard normal shock determinism (MC bump-and-revalue invariant)
+# ═══════════════════════════════════════════════════════════════════════════
+# OptionValuation Greeks via NUMERICAL bump-and-revalue rely on the bumped
+# valuations sharing the same Monte Carlo noise as the unbumped one. If
+# the standard normal shocks differ across bumps, the central difference
+# becomes (signal + 2 * noise) / (2 * eps) and MC variance dominates the
+# result. The invariant is: for a fixed seed, the shocks are a function
+# only of (steps, paths, antithetic, moment_matching) — *not* of any
+# pricing-related parameter (initial_value, volatility, drift, etc.).
+# These tests pin that invariant.
+
+
+class TestStandardNormalDeterminism:
+    """Pin the invariant that bumping pricing-related parameters preserves
+    standard normal shocks at fixed seed/steps/paths/config."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.md = MarketData(self.pricing_date, self.curve, currency="USD")
+        self.sim = SimulationConfig(
+            paths=10_000,
+            num_steps=100,
+            end_date=self.end_date,
+        )
+        self.base_params = GBMParams(initial_value=100.0, volatility=0.25)
+
+    def _z(self, gbm: GBMProcess, *, seed: int = 42) -> np.ndarray:
+        """Generate standard-normal shocks the way `_generate_paths` does."""
+        gbm._ensure_time_grid()
+        num_steps = len(gbm.time_grid) - 1
+        return gbm._standard_normals(seed, num_steps, gbm.paths)
+
+    def test_spot_bump_preserves_shocks(self):
+        base = GBMProcess(self.md, self.base_params, self.sim)
+        bumped = GBMProcess(
+            self.md,
+            GBMParams(initial_value=110.0, volatility=0.25),
+            self.sim,
+        )
+        np.testing.assert_array_equal(self._z(base), self._z(bumped))
+
+    def test_vol_bump_preserves_shocks(self):
+        base = GBMProcess(self.md, self.base_params, self.sim)
+        bumped = GBMProcess(
+            self.md,
+            GBMParams(initial_value=100.0, volatility=0.30),
+            self.sim,
+        )
+        np.testing.assert_array_equal(self._z(base), self._z(bumped))
+
+    def test_rate_bump_preserves_shocks(self):
+        bumped_curve = flat_curve(self.pricing_date, self.end_date, 0.06)
+        bumped_md = MarketData(self.pricing_date, bumped_curve, currency="USD")
+        base = GBMProcess(self.md, self.base_params, self.sim)
+        bumped = GBMProcess(bumped_md, self.base_params, self.sim)
+        np.testing.assert_array_equal(self._z(base), self._z(bumped))
+
+    def test_dividend_bump_preserves_shocks(self):
+        div = flat_curve(self.pricing_date, self.end_date, 0.02)
+        base = GBMProcess(self.md, self.base_params, self.sim)
+        bumped = GBMProcess(
+            self.md,
+            GBMParams(initial_value=100.0, volatility=0.25, dividend_curve=div),
+            self.sim,
+        )
+        np.testing.assert_array_equal(self._z(base), self._z(bumped))
+
+    def test_pricing_date_bump_preserves_shocks(self):
+        """Theta bump shifts the pricing date forward. The simulation
+        config keeps num_steps fixed and end_date fixed, so the time grid
+        spacing changes (smaller dt), but num_steps and num_paths are
+        unchanged → shocks must still match. The drift/diffusion scaling
+        changes; the random shocks do not."""
+        bumped_pricing_date = self.pricing_date + dt.timedelta(days=5)
+        bumped_curve = flat_curve(bumped_pricing_date, self.end_date, 0.05)
+        bumped_md = MarketData(bumped_pricing_date, bumped_curve, currency="USD")
+        base = GBMProcess(self.md, self.base_params, self.sim)
+        bumped = GBMProcess(bumped_md, self.base_params, self.sim)
+        np.testing.assert_array_equal(self._z(base), self._z(bumped))
+
+    def test_simulate_outputs_share_recovered_shocks_under_spot_bump(self):
+        """End-to-end: simulate two paths sets through the public API and
+        recover the standard normal shocks from the log-returns. They
+        must match bit-for-bit. This is the strongest version of the
+        invariant — it goes through `simulate()` rather than reaching
+        into `_standard_normals` directly."""
+        base = GBMProcess(self.md, self.base_params, self.sim)
+        bumped = GBMProcess(
+            self.md,
+            GBMParams(initial_value=110.0, volatility=0.25),
+            self.sim,
+        )
+        paths_base = base.simulate(random_seed=42)
+        paths_bumped = bumped.simulate(random_seed=42)
+
+        # Recover Z from log-returns:
+        #   log(S_{t+1}/S_t) = (r - q - 0.5*σ²) Δt + σ √Δt Z
+        base._ensure_time_grid()
+        time_deltas = base._time_deltas()  # (steps,)
+        sigma = base.volatility
+        # flat 5% rate, no q
+        r = 0.05
+        drift = (r - 0.5 * sigma**2) * time_deltas[:, None]
+        diffusion = sigma * np.sqrt(time_deltas)[:, None]
+
+        z_base = (np.log(paths_base[1:] / paths_base[:-1]) - drift) / diffusion
+        z_bumped = (np.log(paths_bumped[1:] / paths_bumped[:-1]) - drift) / diffusion
+
+        np.testing.assert_allclose(z_base, z_bumped, atol=1e-12, rtol=0)

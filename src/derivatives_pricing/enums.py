@@ -13,6 +13,10 @@ __all__ = [
     "PDESpaceGrid",
     "PDEEarlyExercise",
     "DayCountConvention",
+    "BarrierDirection",
+    "BarrierAction",
+    "BarrierMonitoring",
+    "RebateTiming",
 ]
 
 
@@ -100,3 +104,31 @@ class DayCountConvention(Enum):
     ACT_365F = "ACT/365F"
     ACT_365_25 = "ACT/365.25"
     THIRTY_360_US = "30/360 US"
+
+
+class BarrierDirection(Enum):
+    """Direction the underlying must move to trigger the barrier."""
+
+    UP = "up"
+    DOWN = "down"
+
+
+class BarrierAction(Enum):
+    """Whether the barrier knocks the option in or out."""
+
+    IN = "in"
+    OUT = "out"
+
+
+class BarrierMonitoring(Enum):
+    """How frequently the barrier is monitored."""
+
+    CONTINUOUS = "continuous"
+    DISCRETE = "discrete"
+
+
+class RebateTiming(Enum):
+    """When the rebate is paid upon barrier trigger."""
+
+    AT_HIT = "at_hit"
+    AT_EXPIRY = "at_expiry"

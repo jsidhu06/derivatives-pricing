@@ -67,7 +67,7 @@ jobs:
               --cov-report=term-missing \
               --cov-report=xml \
               --cov-branch \
-              -q --runslow
+              -q -n auto --runslow
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

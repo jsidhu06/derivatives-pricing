@@ -4,7 +4,10 @@ Each pricing method (Monte Carlo, Binomial, etc.) has its own parameter class
 that explicitly documents the configuration options available for that method.
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, replace as dc_replace
+from typing import Any
 import warnings
 
 from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid
@@ -44,6 +47,12 @@ class MonteCarloParams:
         analytical European price and the MC European price from the same
         simulation.  Only applicable to American exercise pricing.
         Default: ``False``.
+    barrier_aware_basis:
+        When ``True``, American barrier Monte Carlo augments the LSM
+        regression basis with barrier-distance features and a local near/far
+        split for American knock-out options. This is mainly useful where
+        the continuation surface changes sharply near the absorbing barrier.
+        Default: ``True``. Only applicable to KO barrier options; ignored otherwise.
     """
 
     random_seed: int | None = None
@@ -53,8 +62,14 @@ class MonteCarloParams:
     log_timings: bool = False
     std_error_warn_ratio: float | None = 0.1
     control_variate_european: bool = False
+    barrier_aware_basis: bool = True
 
     def __post_init__(self) -> None:
+        for name in ("deg", "min_itm"):
+            if type(getattr(self, name)) is not int:
+                raise ValidationError(
+                    f"{name} must be an int, got {type(getattr(self, name)).__name__}"
+                )
         if self.deg < 1:
             raise ValidationError(f"deg must be >= 1, got {self.deg}")
         if self.ridge_lambda < 0:
@@ -64,6 +79,10 @@ class MonteCarloParams:
         if self.std_error_warn_ratio is not None and self.std_error_warn_ratio <= 0:
             raise ValidationError(
                 f"std_error_warn_ratio must be > 0 when set, got {self.std_error_warn_ratio}"
+            )
+        if not isinstance(self.barrier_aware_basis, bool):
+            raise ValidationError(
+                f"barrier_aware_basis must be a bool, got {type(self.barrier_aware_basis).__name__}"
             )
 
 
@@ -113,11 +132,22 @@ class BinomialParams:
     log_timings: bool = False
 
     def __post_init__(self) -> None:
+        for name in ("num_steps",):
+            if type(getattr(self, name)) is not int:
+                raise ValidationError(
+                    f"{name} must be an int, got {type(getattr(self, name)).__name__}"
+                )
         if self.num_steps < 1:
             raise ValidationError(f"num_steps must be >= 1, got {self.num_steps}")
         if self.mc_paths is not None and self.asian_tree_averages is not None:
             raise ValidationError(
                 "Only one of mc_paths and asian_tree_averages can be set, got both"
+            )
+        if self.mc_paths is not None and type(self.mc_paths) is not int:
+            raise ValidationError(f"mc_paths must be an int, got {type(self.mc_paths).__name__}")
+        if self.asian_tree_averages is not None and type(self.asian_tree_averages) is not int:
+            raise ValidationError(
+                f"asian_tree_averages must be an int, got {type(self.asian_tree_averages).__name__}"
             )
         if self.mc_paths is not None and self.mc_paths < 1:
             raise ValidationError(f"mc_paths must be >= 1, got {self.mc_paths}")
@@ -206,7 +236,24 @@ class PDEParams:
     control_variate_european: bool = False
     log_timings: bool = False
 
+    @classmethod
+    def for_barriers(cls, **overrides: Any) -> PDEParams:
+        """Create params that mirror the library's internal barrier defaults.
+
+        Returns a ``PDEParams`` instance with a finer grid and log-spot
+        spatial discretization suitable for barrier pricing.  Any keyword
+        argument accepted by the constructor can be passed to override
+        individual fields.
+        """
+        defaults = cls(spot_steps=1200, time_steps=800, space_grid=PDESpaceGrid.LOG_SPOT)
+        return dc_replace(defaults, **overrides) if overrides else defaults
+
     def __post_init__(self) -> None:
+        for name in ("spot_steps", "time_steps", "max_iter", "rannacher_steps"):
+            if type(getattr(self, name)) is not int:
+                raise ValidationError(
+                    f"{name} must be an int, got {type(getattr(self, name)).__name__}"
+                )
         if self.smax_mult <= 0:
             raise ValidationError(f"smax_mult must be positive, got {self.smax_mult}")
         if self.spot_steps < 3:

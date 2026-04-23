@@ -101,6 +101,21 @@ class TestMCSValuation:
         pv_binom = pv(ud_bin, am_spec, PricingMethod.BINOMIAL, params=BINOM_PARAMS)
         assert np.isclose(pv_deg2, pv_binom, rtol=_MC_RTOL_CROSS_METHOD)
 
+    def test_mcs_american_put_supports_immediate_exercise(self):
+        """Deep ITM put with tiny vol and high rates should exercise immediately."""
+        high_rate_curve = flat_curve(PRICING_DATE, MATURITY, 0.20)
+        gbm = _gbm(paths=20_000, spot=40.0, vol=0.01, discount_curve=high_rate_curve)
+        am_spec = spec(OptionType.PUT, exercise=ExerciseType.AMERICAN, strike=100.0)
+
+        result = pv(
+            gbm,
+            am_spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42, deg=2),
+        )
+
+        assert np.isclose(result, 60.0, atol=0.01)
+
     def test_mcs_pathwise_return(self):
         """Test MCS present_value_pathwise returns discounted PVs per path."""
         gbm = _gbm(paths=1000)

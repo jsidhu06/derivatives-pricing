@@ -1,6 +1,6 @@
 [project]
 name = "derivatives-pricing"
-version = "0.1.2"
+version = "0.2.0b1"
 description = "Python package for options pricing and Greeks computation"
 authors = [
     { name = "Jogi Sidhu" }

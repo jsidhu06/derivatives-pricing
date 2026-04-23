@@ -169,7 +169,7 @@ class DiscountCurve:
             Interpolated discount factors.
         """
         t = np.asarray(t, dtype=float)
-        is_origin = np.isclose(t, 0.0, rtol=0.0, atol=1e-15)
+        is_origin = np.isclose(t, 0.0, rtol=0.0, atol=1e-12)
         t_min, t_max = float(self.times[0]), float(self.times[-1])
         outside = ((t < t_min) & ~is_origin) | (t > t_max)
         if np.any(outside):

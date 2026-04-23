@@ -7,21 +7,31 @@ extensions used by the core dispatcher.
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import logging
+import threading
+import warnings
 import numpy as np
 import pandas as pd
-from ..enums import AsianAveraging, ExerciseType, OptionType
+from ..enums import (
+    AsianAveraging,
+    BarrierAction,
+    BarrierDirection,
+    BarrierMonitoring,
+    ExerciseType,
+    OptionType,
+    RebateTiming,
+)
 from ..utils import calculate_year_fraction, pv_discrete_dividends, log_timing
 from ..exceptions import (
     ArbitrageViolationError,
-    ConfigurationError,
     NumericalError,
     UnsupportedFeatureError,
     ValidationError,
 )
 from .params import BinomialParams
+from .barrier_analytical import _is_triggered
 
 if TYPE_CHECKING:
-    from .core import AsianSpec, OptionValuation, UnderlyingData
+    from .core import AsianSpec, BarrierSpec, OptionValuation, UnderlyingData
 
 
 logger = logging.getLogger(__name__)
@@ -33,15 +43,43 @@ class _BinomialValuationBase:
     def __init__(self, valuation_ctx: OptionValuation) -> None:
         self.valuation_ctx = valuation_ctx
         self.underlying: UnderlyingData = valuation_ctx.underlying  # type: ignore[assignment]
-        if not isinstance(valuation_ctx.params, BinomialParams):
-            raise ConfigurationError(
-                "Binomial valuation requires BinomialParams on OptionValuation"
-            )
-        self.binom_params: BinomialParams = valuation_ctx.params
+        assert isinstance(valuation_ctx.params, BinomialParams)
+        self.binom_params = valuation_ctx.params
+        # Lazy caches for deterministic intermediates — tree setup, the
+        # CRR backward pass, and (on the barrier subclass) the KO / KI
+        # lattices.  These are pure functions of the immutable instance
+        # state, so the first call populates the cache and every later
+        # PV / tree-greek access is an O(1) dict lookup.  Double-checked
+        # locking keeps the hit path lock-free and avoids redundant tree
+        # solves under concurrent access.
+        self._cache: dict[tuple, object] = {}
+        # ``RLock`` (not ``Lock``) — ``_cached`` entries routinely call
+        # other ``_cached`` entries inside their compute callables
+        # (e.g. ``_compute_solve_backward`` calls
+        # ``_setup_binomial_parameters``), which re-acquires this same
+        # lock on the same thread.  A plain ``Lock`` would deadlock.
+        self._cache_lock = threading.RLock()
 
-    def _setup_binomial_parameters(
-        self,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _cached(self, key: tuple, compute):
+        """Return ``self._cache[key]``, populating it with ``compute()`` on miss."""
+        if key in self._cache:
+            return self._cache[key]
+        with self._cache_lock:
+            if key in self._cache:
+                return self._cache[key]
+            value = compute()
+            self._cache[key] = value
+            return value
+
+    def _effective_num_steps(self) -> int:
+        """Return the canonical tree depth for this engine instance."""
+        return int(self.binom_params.num_steps)
+
+    def _setup_binomial_parameters(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return ``(discount_factors, p, spot_lattice)`` — cached after first call."""
+        return self._cached(("setup_binomial_parameters",), self._compute_binomial_parameters)
+
+    def _compute_binomial_parameters(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Setup binomial tree parameters and lattice.
 
 
@@ -52,7 +90,7 @@ class _BinomialValuationBase:
             p : shape (num_steps,) — risk-neutral up-move probabilities
             spot_lattice : shape (num_steps+1, num_steps+1) — CRR spot prices
         """
-        num_steps = int(self.binom_params.num_steps)
+        num_steps = self._effective_num_steps()
         start = self.valuation_ctx.pricing_date
         end = self.valuation_ctx.maturity
         time_intervals = pd.date_range(start, end, periods=num_steps + 1)
@@ -194,10 +232,23 @@ class _BinomialValuationBase:
                 return np.maximum(instrument_values - K, 0)
             return np.maximum(K - instrument_values, 0)
 
-        payoff_fn = self.valuation_ctx.spec.payoff  # type: ignore[union-attr]
-        return payoff_fn(instrument_values)
+        assert hasattr(self.valuation_ctx.spec, "payoff")
+        return self.valuation_ctx.spec.payoff(instrument_values)  # type: ignore[union-attr]
 
     def _solve_backward(self, *, early_exercise: bool) -> np.ndarray:
+        """Return the CRR backward-induction lattice — cached per ``early_exercise``.
+
+        The cache key includes ``early_exercise`` because the tree topology
+        changes between vanilla and American recursions; within a single
+        instance the value is fixed (so at most one entry is ever stored),
+        but keying defensively means unexpected mixed calls can't collide.
+        """
+        return self._cached(
+            ("solve_backward", early_exercise),
+            lambda: self._compute_solve_backward(early_exercise=early_exercise),
+        )
+
+    def _compute_solve_backward(self, *, early_exercise: bool) -> np.ndarray:
         """Run CRR backward induction, optionally with early exercise.
 
         Parameters
@@ -211,7 +262,7 @@ class _BinomialValuationBase:
         np.ndarray
             Option value lattice, shape ``(num_steps+1, num_steps+1)``.
         """
-        num_steps = int(self.binom_params.num_steps)
+        num_steps = self._effective_num_steps()
         discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         option_lattice = np.zeros_like(spot_lattice)
@@ -240,7 +291,7 @@ class _BinomialValuationBase:
         Raises UnsupportedFeatureError for Asian or other non-vanilla specs
         whose ``solve()`` does not return a 2-D option lattice.
         """
-        num_steps = int(self.binom_params.num_steps)
+        num_steps = self._effective_num_steps()
         _, _, spot_lattice = self._setup_binomial_parameters()
         option_lattice = self.solve()  # type: ignore[attr-defined]
         if not isinstance(option_lattice, np.ndarray) or option_lattice.ndim != 2:
@@ -248,11 +299,7 @@ class _BinomialValuationBase:
                 "Tree Greeks are only available for vanilla binomial options, "
                 "not Asian or other path-dependent specs."
             )
-        T = calculate_year_fraction(
-            self.valuation_ctx.pricing_date,
-            self.valuation_ctx.maturity,
-            day_count_convention=self.valuation_ctx.day_count_convention,
-        )
+        T = self.valuation_ctx._maturity_year_fraction()
         dt = T / num_steps
         return option_lattice, spot_lattice, dt
 
@@ -282,7 +329,7 @@ class _BinomialValuationBase:
         :math:`\\Delta_- = (f_{ud}-f_{dd})/(S_{ud}-S_{dd})`,
         and :math:`h = (S_{uu}-S_{dd})/2`.
         """
-        if self.binom_params.num_steps < 2:
+        if self._effective_num_steps() < 2:
             raise ValidationError("Tree gamma requires num_steps >= 2.")
         f, S, _ = self._tree_greeks_data()
         delta_up = (f[0, 2] - f[1, 2]) / (S[0, 2] - S[1, 2])
@@ -300,7 +347,7 @@ class _BinomialValuationBase:
         where :math:`f_{ud}` is the central node at step 2 and :math:`f_0`
         the root value.  Returned per **calendar day** (divided by 365).
         """
-        if self.binom_params.num_steps < 2:
+        if self._effective_num_steps() < 2:
             raise ValidationError("Tree theta requires num_steps >= 2.")
         f, _, dt = self._tree_greeks_data()
         theta_per_year = (f[1, 2] - f[0, 0]) / (2.0 * dt)
@@ -312,7 +359,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 
     def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree."""
-        logger.debug("Binomial European num_steps=%d", self.binom_params.num_steps)
+        logger.debug("Binomial European num_steps=%d", self._effective_num_steps())
         return self._solve_backward(early_exercise=False)
 
     def present_value(self) -> float:
@@ -329,7 +376,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 
     def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree with early exercise."""
-        logger.debug("Binomial American num_steps=%d", self.binom_params.num_steps)
+        logger.debug("Binomial American num_steps=%d", self._effective_num_steps())
         return self._solve_backward(early_exercise=True)
 
     def present_value(self) -> float:
@@ -388,7 +435,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 "set mc_paths to None in BinomialParams."
             )
 
-        num_steps = int(self.binom_params.num_steps)
+        num_steps = self._effective_num_steps()
         logger.debug(
             "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
         )
@@ -685,7 +732,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             values : (k, N+1, N+1) — option values per average bucket
             avg_grid : (k, N+1, N+1) — representative averages
         """
-        num_steps = int(self.binom_params.num_steps)
+        num_steps = self._effective_num_steps()
         logger.debug(
             "Binomial Asian Hull num_steps=%d averages=%s",
             num_steps,
@@ -836,3 +883,369 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         if self.binom_params.mc_paths is not None:
             return self._solve_mc()
         return self._solve_hull()
+
+
+class _BinomialBarrierValuation(_BinomialValuationBase):
+    """Barrier option valuation using a CRR binomial tree.
+
+    Continuous barriers use Boyle-Lau step adjustment on top of
+    the user-provided base ``num_steps``. Knock-out options are solved directly
+    via barrier-aware backward induction; knock-in options use an explicit
+    active/inactive two-state recursion so American knock-ins and KI rebates are
+    handled without parity shortcuts.
+    """
+
+    def __init__(self, valuation_ctx: OptionValuation) -> None:
+        super().__init__(valuation_ctx)
+        self.spec: BarrierSpec = valuation_ctx.spec  # type: ignore[assignment]
+        self._effective_steps = self._resolve_effective_num_steps()
+
+    @staticmethod
+    def _hit_mask(
+        spots: np.ndarray,
+        barrier: float,
+        direction: BarrierDirection,
+    ) -> np.ndarray:
+        if direction is BarrierDirection.UP:
+            return spots >= barrier
+        return spots <= barrier
+
+    def _tree_dates(self, num_steps: int) -> np.ndarray:
+        return np.array(
+            pd.date_range(
+                self.valuation_ctx.pricing_date,
+                self.valuation_ctx.maturity,
+                periods=num_steps + 1,
+            ).to_pydatetime()
+        )
+
+    def _monitoring_step_mask(self, num_steps: int) -> np.ndarray:
+        if self.spec.monitoring is BarrierMonitoring.CONTINUOUS:
+            mask: np.ndarray = np.ones(num_steps + 1, dtype=bool)
+            mask[0] = False
+            return mask
+
+        if self.spec.monitoring_dates is not None:
+            tree_dates = self._tree_dates(num_steps)
+            tree_seconds = np.array([d.timestamp() for d in tree_dates], dtype=float)
+            mapped = []
+            for obs_date in self.spec.monitoring_dates:
+                idx = int(np.argmin(np.abs(tree_seconds - obs_date.timestamp())))
+                mapped.append(idx)
+            observation_indices = np.unique(np.array(mapped, dtype=int))
+        elif self.spec.num_observations is not None:
+            # Match OptionValuation._barrier_monitoring_dates: N tree indices
+            # at num_steps/N, 2*num_steps/N, ..., num_steps — index 0 (the
+            # pricing date) excluded per BGK / Boyle-Tian convention.
+            observation_indices = np.unique(
+                np.round(np.linspace(0, num_steps, self.spec.num_observations + 1)[1:]).astype(int)
+            )
+        else:
+            raise ValidationError(
+                "Discrete barrier monitoring requires num_observations or monitoring_dates."
+            )
+
+        mask = np.zeros(num_steps + 1, dtype=bool)
+        mask[observation_indices] = True
+        mask[0] = False
+        return mask
+
+    def _resolve_effective_num_steps(self) -> int:
+        base_steps = int(self.binom_params.num_steps)
+        if self.spec.monitoring is not BarrierMonitoring.CONTINUOUS:
+            return base_steps
+
+        spot = float(self.underlying.initial_value)
+        barrier = float(self.spec.barrier)
+        sigma = float(self.underlying.volatility)
+        ttm = self.valuation_ctx._maturity_year_fraction()
+        if spot <= 0.0 or barrier <= 0.0 or sigma <= 0.0 or ttm <= 0.0:
+            return base_steps
+
+        # If the option is already triggered at inception, `present_value()`
+        # will short-circuit through `_inception_short_circuit_value` without
+        # running the barrier tree. Neither Boyle-Lau inflation nor the
+        # cap-bind warning is meaningful in that case:
+        #   - KO: the option is dead at t=0 and PV is a closed-form rebate
+        #     discount; the barrier-aware solver never runs.
+        #   - KI: the option becomes vanilla immediately and is priced via
+        #     `_solve_backward` (not the barrier-aware solver), so barrier
+        #     alignment is irrelevant.
+        # Skip both the inflation and any warning for those cases.
+        if _is_triggered(spot, barrier, self.spec.direction):
+            return base_steps
+
+        log_distance = np.log(max(spot, barrier) / min(spot, barrier))
+        divisor = log_distance * log_distance
+        # Only bail if log_distance is exactly zero (barrier coincides with
+        # spot — a triggered-at-inception case handled upstream by
+        # `_inception_short_circuit_value`). We must NOT use `np.isclose` here
+        # with its default atol=1e-8 because that would silently disable the
+        # Boyle-Lau step adjustment for all near-spot barriers (any barrier
+        # closer to spot than ~1e-4 in log-space would fall inside the
+        # tolerance), exactly the regime where BL alignment matters most.
+        if divisor <= 0.0:
+            return base_steps
+
+        max_steps = max(1000, base_steps * 5)
+        optimum_steps = base_steps
+        for i in range(1, base_steps):
+            candidate = int((i * i * sigma * sigma * ttm) / divisor)
+            if base_steps < candidate:
+                if candidate > max_steps:
+                    # Boyle-Lau alignment requires a tree with `candidate` time
+                    # steps to place a layer of CRR nodes exactly on the barrier
+                    # (typically because the barrier sits very close to spot).
+                    # The `max_steps` cap prevents runaway memory, so the final
+                    # tree will run at `max_steps` without barrier alignment and
+                    # will converge extremely slowly (classic Boyle-Lau bias,
+                    # O(1/√n) with a large constant). Warn the user so they
+                    # know to switch engines.
+                    log_distance_pct = 100.0 * log_distance / max(np.log(spot), 1.0e-12)
+                    warnings.warn(
+                        (
+                            "Binomial barrier pricing: Boyle-Lau step alignment "
+                            f"needs ~{candidate} time steps to place a tree layer "
+                            f"on the barrier (spot={spot:g}, barrier={barrier:g}, "
+                            f"|log(H/S)|={log_distance:.2e}, ~{log_distance_pct:.3f}%"
+                            f" of log-spot), but the step cap is {max_steps}. "
+                            f"The tree will run at {max_steps} steps without "
+                            "barrier alignment and the price will converge "
+                            "only as O(1/√n) with a large constant. For "
+                            "barriers this close to spot, PDE_FD is strongly "
+                            "recommended as the more accurate engine."
+                        ),
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                optimum_steps = min(candidate, max_steps)
+                break
+        return optimum_steps
+
+    def _effective_num_steps(self) -> int:
+        return self._effective_steps
+
+    def _tree_greek_option_lattice(self, *, early_exercise: bool) -> np.ndarray:
+        """Return the single lattice used for tree-greek extraction.
+
+        Knock-ins use the inactive-state lattice because that is the contract's
+        state at the root. If the knock-in barrier is already triggered at
+        inception, tree greeks should follow the same vanilla shortcut used by
+        present_value().
+        """
+        if self.spec.action is BarrierAction.OUT:
+            if self.valuation_ctx._barrier_triggered_at_inception():
+                return self._resolved_knock_out_lattice()
+            return self._solve_knock_out(early_exercise=early_exercise)
+
+        if self.valuation_ctx._barrier_triggered_at_inception():
+            return self._solve_backward(early_exercise=early_exercise)
+
+        _, inactive = self._solve_knock_in(early_exercise=early_exercise)
+        return inactive
+
+    def _tree_greeks_data(self) -> tuple[np.ndarray, np.ndarray, float]:
+        """Return the barrier option lattice, spot lattice and time delta used for tree-greek
+        extraction."""
+        num_steps = self._effective_num_steps()
+        _, _, spot_lattice = self._setup_binomial_parameters()
+        early_exercise = self.spec.exercise_type is ExerciseType.AMERICAN
+        option_lattice = self._tree_greek_option_lattice(early_exercise=early_exercise)
+        T = self.valuation_ctx._maturity_year_fraction()
+        dt = T / num_steps
+        return option_lattice, spot_lattice, dt
+
+    def _ko_rebate_values(
+        self,
+        *,
+        discount_factors: np.ndarray,
+        num_steps: int,
+    ) -> np.ndarray:
+        rebate = float(self.spec.rebate)
+        if rebate <= 0.0:
+            return np.zeros(num_steps + 1, dtype=float)
+        if self.spec.rebate_timing is RebateTiming.AT_HIT:
+            return np.full(num_steps + 1, rebate, dtype=float)
+
+        to_maturity: np.ndarray = np.ones(num_steps + 1, dtype=float)
+        if num_steps > 0:
+            to_maturity[:num_steps] = np.cumprod(discount_factors[::-1])[::-1]
+        return rebate * to_maturity
+
+    def _resolved_knock_out_lattice(self) -> np.ndarray:
+        """Return the deterministic-value lattice for a KO already dead at inception."""
+        num_steps = self._effective_num_steps()
+        discount_factors, _, spot_lattice = self._setup_binomial_parameters()
+        values_by_time = self._ko_rebate_values(
+            discount_factors=discount_factors,
+            num_steps=num_steps,
+        )
+
+        option_lattice = np.zeros_like(spot_lattice)
+        for t in range(num_steps + 1):
+            option_lattice[: t + 1, t] = values_by_time[t]
+        return option_lattice
+
+    def _solve_knock_out(self, *, early_exercise: bool) -> np.ndarray:
+        """Return the KO lattice — cached so ``present_value`` + tree greeks share work."""
+        return self._cached(
+            ("solve_knock_out", early_exercise),
+            lambda: self._compute_knock_out(early_exercise=early_exercise),
+        )
+
+    def _compute_knock_out(self, *, early_exercise: bool) -> np.ndarray:
+        num_steps = self._effective_num_steps()
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
+        intrinsic = self._get_intrinsic_values(spot_lattice)
+        option_lattice = np.zeros_like(spot_lattice)
+        monitoring_mask = self._monitoring_step_mask(num_steps)
+        rebate_values = self._ko_rebate_values(
+            discount_factors=discount_factors,
+            num_steps=num_steps,
+        )
+
+        option_lattice[: num_steps + 1, num_steps] = intrinsic[: num_steps + 1, num_steps]
+        if monitoring_mask[num_steps]:
+            terminal_hit = self._hit_mask(
+                spot_lattice[: num_steps + 1, num_steps],
+                float(self.spec.barrier),
+                self.spec.direction,
+            )
+            option_lattice[: num_steps + 1, num_steps] = np.where(
+                terminal_hit,
+                rebate_values[num_steps],
+                option_lattice[: num_steps + 1, num_steps],
+            )
+
+        for t in range(num_steps - 1, -1, -1):
+            continuation = discount_factors[t] * (
+                p[t] * option_lattice[: t + 1, t + 1]
+                + (1.0 - p[t]) * option_lattice[1 : t + 2, t + 1]
+            )
+            if early_exercise:
+                values = np.maximum(intrinsic[: t + 1, t], continuation)
+            else:
+                values = continuation
+
+            if monitoring_mask[t]:
+                hit = self._hit_mask(
+                    spot_lattice[: t + 1, t],
+                    float(self.spec.barrier),
+                    self.spec.direction,
+                )
+                values = np.where(hit, rebate_values[t], values)
+
+            option_lattice[: t + 1, t] = values
+
+        return option_lattice
+
+    def _solve_knock_in(self, *, early_exercise: bool) -> tuple[np.ndarray, np.ndarray]:
+        """Return ``(active, inactive)`` KI lattices — cached for PV + tree-greek reuse."""
+        return self._cached(
+            ("solve_knock_in", early_exercise),
+            lambda: self._compute_knock_in(early_exercise=early_exercise),
+        )
+
+    def _compute_knock_in(self, *, early_exercise: bool) -> tuple[np.ndarray, np.ndarray]:
+        num_steps = self._effective_num_steps()
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
+        intrinsic = self._get_intrinsic_values(spot_lattice)
+        monitoring_mask = self._monitoring_step_mask(num_steps)
+
+        active = np.zeros_like(spot_lattice)
+        inactive = np.zeros_like(spot_lattice)
+
+        active[: num_steps + 1, num_steps] = intrinsic[: num_steps + 1, num_steps]
+        inactive_terminal: np.ndarray = np.full(num_steps + 1, float(self.spec.rebate), dtype=float)
+        if monitoring_mask[num_steps]:
+            terminal_hit = self._hit_mask(
+                spot_lattice[: num_steps + 1, num_steps],
+                float(self.spec.barrier),
+                self.spec.direction,
+            )
+            inactive_terminal = np.where(
+                terminal_hit,
+                active[: num_steps + 1, num_steps],
+                inactive_terminal,
+            )
+        inactive[: num_steps + 1, num_steps] = inactive_terminal
+
+        for t in range(num_steps - 1, -1, -1):
+            continuation_active = discount_factors[t] * (
+                p[t] * active[: t + 1, t + 1] + (1.0 - p[t]) * active[1 : t + 2, t + 1]
+            )
+            if early_exercise:
+                active_values = np.maximum(intrinsic[: t + 1, t], continuation_active)
+            else:
+                active_values = continuation_active
+            active[: t + 1, t] = active_values
+
+            continuation_inactive = discount_factors[t] * (
+                p[t] * inactive[: t + 1, t + 1] + (1.0 - p[t]) * inactive[1 : t + 2, t + 1]
+            )
+            if monitoring_mask[t]:
+                hit = self._hit_mask(
+                    spot_lattice[: t + 1, t],
+                    float(self.spec.barrier),
+                    self.spec.direction,
+                )
+                continuation_inactive = np.where(hit, active_values, continuation_inactive)
+            inactive[: t + 1, t] = continuation_inactive
+
+        return active, inactive
+
+    def _inception_short_circuit_value(self, *, early_exercise: bool) -> float | None:
+        """Return the PV if the barrier is triggered at inception, else None.
+
+        For knock-out options the result is an O(1) closed-form rebate PV
+        (zero without a rebate, the rebate amount for ``AT_HIT``, or its
+        discounted value for ``AT_EXPIRY``).  For knock-in options the
+        result is the vanilla tree solve (O(n²)) since the option becomes
+        an ordinary vanilla the moment the barrier is hit — that path is
+        wrapped in its own ``log_timing`` under a distinct label so a
+        user with ``log_timings=True`` can distinguish it from a regular
+        barrier-aware solve.
+        """
+        if not self.valuation_ctx._barrier_triggered_at_inception():
+            return None
+
+        if self.spec.action is BarrierAction.OUT:
+            if self.spec.rebate <= 0.0:
+                return 0.0
+            if self.spec.rebate_timing is RebateTiming.AT_HIT:
+                return float(self.spec.rebate)
+            ttm = self.valuation_ctx._maturity_year_fraction()
+            return float(self.spec.rebate) * float(self.valuation_ctx.discount_curve.df(ttm))
+
+        label = (
+            f"Binomial vanilla (KI triggered at inception, "
+            f"{'American' if early_exercise else 'European'}) present_value"
+        )
+        with log_timing(logger, label, self.binom_params.log_timings):
+            vanilla_lattice = self._solve_backward(early_exercise=early_exercise)
+        return float(vanilla_lattice[0, 0])
+
+    def solve(self) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        early_exercise = self.spec.exercise_type is ExerciseType.AMERICAN
+        if self.spec.action is BarrierAction.OUT:
+            return self._solve_knock_out(early_exercise=early_exercise)
+        return self._solve_knock_in(early_exercise=early_exercise)
+
+    def present_value(self) -> float:
+        early_exercise = self.spec.exercise_type is ExerciseType.AMERICAN
+        triggered_value = self._inception_short_circuit_value(
+            early_exercise=early_exercise,
+        )
+        if triggered_value is not None:
+            return triggered_value
+
+        label = f"Binomial barrier {'American' if early_exercise else 'European'} present_value"
+        with log_timing(logger, label, self.binom_params.log_timings):
+            solved = self.solve()
+
+        if self.spec.action is BarrierAction.OUT:
+            assert isinstance(solved, np.ndarray)
+            return float(solved[0, 0])
+        assert isinstance(solved, tuple)
+        _, inactive = solved
+        return float(inactive[0, 0])
