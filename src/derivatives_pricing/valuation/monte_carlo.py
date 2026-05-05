@@ -435,16 +435,28 @@ class _MCEuropeanValuation(_MCValuationBase):
 
     # --- likelihood-ratio Greeks ------------------------------------------
 
+    @staticmethod
+    def _require_positive_sigma_for_lr(sigma: float, greek: str) -> None:
+        """LR estimators divide by σ; the lognormal density is degenerate at σ=0."""
+        if sigma <= 0.0:
+            raise UnsupportedFeatureError(
+                f"Likelihood-ratio {greek} is undefined at sigma=0 (the lognormal "
+                "density degenerates to a Dirac at the forward, so the score "
+                "function diverges). Use GreekCalculationMethod.NUMERICAL or "
+                "PATHWISE instead, or call BSM analytical greeks."
+            )
+
     def delta_lr(self) -> float:
         r"""Likelihood-ratio (score-function) delta estimator.
 
         :math:`\\Delta = e^{-rT}\\,\\mathbb{E}\\!\\left[\\Phi(S_T)\\,
         \\frac{Z}{\\sigma\\sqrt{T}\\,S_0}\\right]`
         """
+        sigma = float(self.underlying.volatility)
+        self._require_positive_sigma_for_lr(sigma, "delta")
         ST, idx, ttm, df = self._simulate_terminal()
         Z = self._effective_terminal_z(idx, ttm)
         S0 = float(self.underlying.initial_value)
-        sigma = float(self.underlying.volatility)
         K = self.valuation_ctx.strike
         payoff = _vanilla_payoff(self.valuation_ctx.option_type, K, ST)
         return float(np.mean(df * payoff * Z / (sigma * np.sqrt(ttm) * S0)))
@@ -462,9 +474,10 @@ class _MCEuropeanValuation(_MCValuationBase):
         :math:`\\mu = r - q - \\tfrac12\\sigma^2` depends on :math:`\\sigma`
         via the Itô correction.
         """
+        sigma = float(self.underlying.volatility)
+        self._require_positive_sigma_for_lr(sigma, "vega")
         ST, idx, ttm, df = self._simulate_terminal()
         Z = self._effective_terminal_z(idx, ttm)
-        sigma = float(self.underlying.volatility)
         K = self.valuation_ctx.strike
         payoff = _vanilla_payoff(self.valuation_ctx.option_type, K, ST)
         score = (Z**2 - 1) / sigma - Z * np.sqrt(ttm)
@@ -516,9 +529,10 @@ class _MCEuropeanValuation(_MCValuationBase):
 
         where :math:`a = r - q - \tfrac12\sigma^2`.
         """
+        sigma = float(self.underlying.volatility)
+        self._require_positive_sigma_for_lr(sigma, "theta")
         ST, idx, ttm, df = self._simulate_terminal()
         Z = self._effective_terminal_z(idx, ttm)
-        sigma = float(self.underlying.volatility)
         K = self.valuation_ctx.strike
         r, q = self._risk_free_and_div_rates(ttm)
         a = r - q - 0.5 * sigma**2
@@ -550,9 +564,10 @@ class _MCEuropeanValuation(_MCValuationBase):
             \rho_{\text{LR}} = \mathrm{df}\,\mathbb{E}\!\left[
             \Phi(S_T)\!\left(\frac{\sqrt{T}}{\sigma}\,Z - T\right)\right]
         """
+        sigma = float(self.underlying.volatility)
+        self._require_positive_sigma_for_lr(sigma, "rho")
         ST, idx, ttm, df = self._simulate_terminal()
         Z = self._effective_terminal_z(idx, ttm)
-        sigma = float(self.underlying.volatility)
         K = self.valuation_ctx.strike
         payoff = _vanilla_payoff(self.valuation_ctx.option_type, K, ST)
         score = np.sqrt(ttm) / sigma * Z - ttm
@@ -1127,20 +1142,28 @@ def _brownian_bridge_hit_prob(
     """
     p = np.zeros_like(S_i)
 
+    # At sigma == 0 the path is deterministic and monotone, so any in-step
+    # crossing must show up at an endpoint -- the `crossed` mask catches it
+    # and the Brownian-bridge correction is both undefined (1/sigma**2) and
+    # unnecessary (interior hit probability is 0).
+    sigma_positive = sigma > 0.0
+
     if direction is BarrierDirection.UP:
         crossed = (S_i >= barrier) | (S_next >= barrier)
-        both_below = ~crossed
-        if np.any(both_below):
-            log_a = np.log(barrier / S_i[both_below])
-            log_b = np.log(barrier / S_next[both_below])
-            p[both_below] = np.exp(-2.0 * log_a * log_b / (sigma**2 * dt_step))
+        if sigma_positive:
+            both_below = ~crossed
+            if np.any(both_below):
+                log_a = np.log(barrier / S_i[both_below])
+                log_b = np.log(barrier / S_next[both_below])
+                p[both_below] = np.exp(-2.0 * log_a * log_b / (sigma**2 * dt_step))
     else:
         crossed = (S_i <= barrier) | (S_next <= barrier)
-        both_above = ~crossed
-        if np.any(both_above):
-            log_a = np.log(S_i[both_above] / barrier)
-            log_b = np.log(S_next[both_above] / barrier)
-            p[both_above] = np.exp(-2.0 * log_a * log_b / (sigma**2 * dt_step))
+        if sigma_positive:
+            both_above = ~crossed
+            if np.any(both_above):
+                log_a = np.log(S_i[both_above] / barrier)
+                log_b = np.log(S_next[both_above] / barrier)
+                p[both_above] = np.exp(-2.0 * log_a * log_b / (sigma**2 * dt_step))
 
     p[crossed] = 1.0
     return np.clip(p, 0.0, 1.0)

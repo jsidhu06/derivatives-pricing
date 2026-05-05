@@ -4,7 +4,7 @@ import warnings
 
 import pytest
 
-from derivatives_pricing.enums import PDEMethod, PDESpaceGrid
+from derivatives_pricing.enums import BarrierMonitoring, PDEMethod, PDESpaceGrid
 from derivatives_pricing.exceptions import ValidationError
 from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
@@ -190,21 +190,47 @@ class TestPDEParams:
         with pytest.raises(ValidationError, match="spot_steps must be an int"):
             PDEParams(spot_steps=True)
 
-    def test_for_barriers_defaults(self):
-        p = PDEParams.for_barriers()
+    def test_for_barriers_continuous_defaults(self):
+        p = PDEParams.for_barriers(monitoring=BarrierMonitoring.CONTINUOUS)
         assert p.spot_steps == 1200
         assert p.time_steps == 800
         assert p.space_grid is PDESpaceGrid.LOG_SPOT
+        # Continuous monitoring → CN (high accuracy on smooth time march
+        # after rannacher-damped startup at maturity).
         assert p.method is PDEMethod.CRANK_NICOLSON
         assert p.control_variate_european is False
 
+    def test_for_barriers_discrete_defaults_to_implicit(self):
+        p = PDEParams.for_barriers(monitoring=BarrierMonitoring.DISCRETE)
+        assert p.spot_steps == 1600
+        assert p.time_steps == 1200
+        assert p.space_grid is PDESpaceGrid.LOG_SPOT
+        # Discrete monitoring → IMPLICIT (L-stable)
+        assert p.method is PDEMethod.IMPLICIT
+
     def test_for_barriers_with_overrides(self):
-        p = PDEParams.for_barriers(log_timings=True, control_variate_european=True)
+        p = PDEParams.for_barriers(
+            monitoring=BarrierMonitoring.CONTINUOUS,
+            log_timings=True,
+            control_variate_european=True,
+        )
         assert p.spot_steps == 1200
         assert p.time_steps == 800
         assert p.log_timings is True
         assert p.control_variate_european is True
 
+    def test_for_barriers_method_override_wins(self):
+        """Caller can force CN even on discrete if they really want it."""
+        p = PDEParams.for_barriers(
+            monitoring=BarrierMonitoring.DISCRETE,
+            method=PDEMethod.CRANK_NICOLSON,
+        )
+        assert p.method is PDEMethod.CRANK_NICOLSON
+
     def test_for_barriers_rejects_invalid_override(self):
         with pytest.raises(ValidationError, match="spot_steps must be >= 3"):
-            PDEParams.for_barriers(spot_steps=2)
+            PDEParams.for_barriers(monitoring=BarrierMonitoring.CONTINUOUS, spot_steps=2)
+
+    def test_for_barriers_requires_monitoring_kwarg(self):
+        with pytest.raises(TypeError):
+            PDEParams.for_barriers()  # type: ignore[call-arg]

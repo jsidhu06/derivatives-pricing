@@ -21,6 +21,7 @@ from derivatives_pricing.enums import (
     AsianAveraging,
     BarrierAction,
     BarrierDirection,
+    BarrierMonitoring,
     DayCountConvention,
     ExerciseType,
     OptionType,
@@ -912,8 +913,7 @@ _BARRIER_SPOT = 100.0
 _BARRIER_VOL = 0.25
 _BARRIER_RATE = 0.05
 _BARRIER_DIV = 0.02
-_BARRIER_NUMERICAL_SPOT_BUMP_RATIO = 0.025
-_BARRIER_PDE_CFG = PDEParams.for_barriers()
+_BARRIER_PDE_CFG = PDEParams.for_barriers(monitoring=BarrierMonitoring.CONTINUOUS)
 _BARRIER_BINOM_CFG = BinomialParams(num_steps=1000)
 
 _QL_BARRIER_TYPE = {
@@ -937,17 +937,12 @@ def _barrier_nonflat_curves() -> tuple[DiscountCurve, DiscountCurve]:
     )
 
 
-def _barrier_numerical_spot_bump(spot: float) -> float:
-    return float(spot) * _BARRIER_NUMERICAL_SPOT_BUMP_RATIO
-
-
 _QL_BARRIER_COMPARABLE_GREEKS: tuple[str, ...] = ("delta", "gamma", "theta")
 
 
 def _dp_barrier_greeks_from_valuation(
     ov: OptionValuation,
     *,
-    spot: float,
     greeks: tuple[str, ...] = _QL_BARRIER_COMPARABLE_GREEKS,
 ) -> dict[str, float]:
     """Compute the requested barrier greeks for a valuation.
@@ -957,18 +952,17 @@ def _dp_barrier_greeks_from_valuation(
     for these same scenarios are cross-validated in test_greeks.py
     (European: BSM vs PDE; American: binomial vs PDE for rho only —
     binomial barrier vega is unavailable).
+
+    Each engine uses its own bump default where applicable.
     """
-    bump = _barrier_numerical_spot_bump(spot)
     result: dict[str, float] = {}
     if "delta" in greeks:
-        result["delta"] = ov.delta(epsilon=bump)
+        result["delta"] = ov.delta()
     if "gamma" in greeks:
-        result["gamma"] = ov.gamma(epsilon=bump)
+        result["gamma"] = ov.gamma()
     if "vega" in greeks:
         result["vega"] = ov.vega()
     if "theta" in greeks:
-        # No explicit ``time_bump_days`` — auto-select routes AN barrier to
-        # the BSM PDE identity, BN/PDE to their native tree/grid theta.
         result["theta"] = ov.theta()
     if "rho" in greeks:
         result["rho"] = ov.rho()
@@ -1088,7 +1082,7 @@ def _dp_barrier_greeks(
         rebate_timing=rebate_timing,
     )
     ov = OptionValuation(ud, spec, pricing_method, params=params)
-    return _dp_barrier_greeks_from_valuation(ov, spot=_BARRIER_SPOT, greeks=greeks)
+    return _dp_barrier_greeks_from_valuation(ov, greeks=greeks)
 
 
 _BARRIER_GREEK_SCENARIOS = [
@@ -1632,7 +1626,7 @@ def test_barrier_european_discrete_divs_greeks_pde_vs_quantlib(
         rebate_timing=RebateTiming.AT_HIT,
     )
     ov = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_BARRIER_PDE_CFG)
-    dp_greeks = _dp_barrier_greeks_from_valuation(ov, spot=_BARRIER_SPOT)
+    dp_greeks = _dp_barrier_greeks_from_valuation(ov)
 
     # QL side — build engine once, read native greeks directly.
     # All dividends are cash-discrete so set continuous div yield to zero.

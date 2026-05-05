@@ -12,7 +12,7 @@ import time
 import numpy as np
 
 from .enums import DayCountConvention, OptionType
-from .exceptions import ArbitrageViolationError, ValidationError
+from .exceptions import ArbitrageViolationError, ConfigurationError, ValidationError
 
 if TYPE_CHECKING:
     from .rates import DiscountCurve
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 __all__ = [
     "log_timing",
     "validate_naive_datetime",
+    "coerce_positive_float",
     "calculate_year_fraction",
     "pv_discrete_dividends",
     "forward_price",
@@ -44,6 +45,67 @@ def validate_naive_datetime(
         raise type_error_cls(f"{field_name} must be a datetime, got {type(value).__name__}")
     if value.tzinfo is not None:
         raise ValidationError(f"{field_name} must be timezone-naive datetime")
+
+
+def coerce_positive_float(
+    value: object,
+    *,
+    name: str,
+    strict: bool = True,
+    allow_none: bool = False,
+) -> float:
+    """Coerce ``value`` to ``float`` and validate it is finite and positive.
+
+    Centralises the float-coercion / finite / sign-check pattern used by
+    dataclasses (``UnderlyingData``, ``GBMParams``, ``BarrierSpec``,
+    etc.) so that all fields raise a consistent ``ConfigurationError`` for
+    non-numeric input and ``ValidationError`` for non-finite or wrong-sign
+    input.
+
+    Parameters
+    ----------
+    value
+        The user-supplied value. May be int, float, or anything ``float()``
+        can accept.
+    name
+        Human-readable field name used in error messages
+        (e.g. ``"UnderlyingData.initial_value"``).
+    strict
+        If True (default) require ``value > 0``; if False require
+        ``value >= 0``.  Use ``strict=False`` for fields where zero is a
+        meaningful boundary value (volatility, rebate, strike).
+    allow_none
+        If True, ``None`` returns ``None`` (caller handles default).
+        Otherwise raise ``ValidationError``.
+
+    Returns
+    -------
+    float
+        The coerced value.
+
+    Raises
+    ------
+    ConfigurationError
+        If ``value`` cannot be coerced to ``float``.
+    ValidationError
+        If ``value`` is None (and ``allow_none`` is False), non-finite,
+        or violates the sign constraint.
+    """
+    if value is None:
+        if allow_none:
+            return None  # type: ignore[return-value]
+        raise ValidationError(f"{name} must be provided")
+    try:
+        x = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{name} must be numeric") from exc
+    if not np.isfinite(x):
+        raise ValidationError(f"{name} must be finite")
+    if strict and x <= 0.0:
+        raise ValidationError(f"{name} must be > 0, got {x}")
+    if not strict and x < 0.0:
+        raise ValidationError(f"{name} must be >= 0, got {x}")
+    return x
 
 
 @contextmanager

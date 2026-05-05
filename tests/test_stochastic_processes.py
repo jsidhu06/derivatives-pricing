@@ -179,6 +179,25 @@ class TestGBMProcess:
         assert np.abs(mean_return - expected_drift) < 0.01
 
 
+class TestGBMParamsValidation:
+    """GBMParams rejects negative volatility and non-positive initial value."""
+
+    @pytest.mark.parametrize("vol", [-1e-12, -0.2, -1.0])
+    def test_rejects_negative_volatility(self, vol):
+        with pytest.raises(ValidationError, match=r"volatility must be >= 0"):
+            GBMParams(initial_value=100.0, volatility=vol)
+
+    @pytest.mark.parametrize("spot", [0.0, -1e-12, -100.0])
+    def test_rejects_non_positive_initial_value(self, spot):
+        with pytest.raises(ValidationError, match=r"initial_value must be > 0"):
+            GBMParams(initial_value=spot, volatility=0.2)
+
+    def test_zero_volatility_allowed(self):
+        """σ = 0 is the deterministic-drift limit; GBMParams accepts it."""
+        params = GBMParams(initial_value=100.0, volatility=0.0)
+        assert params.volatility == 0.0
+
+
 class TestSRDProcess:
     """Tests for the SRDProcess (CIR) class."""
 

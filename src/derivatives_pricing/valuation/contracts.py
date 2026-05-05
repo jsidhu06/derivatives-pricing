@@ -18,7 +18,7 @@ from ..enums import (
     RebateTiming,
 )
 from ..exceptions import ConfigurationError, ValidationError
-from ..utils import validate_naive_datetime
+from ..utils import coerce_positive_float, validate_naive_datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,17 +71,11 @@ class VanillaSpec:
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
 
-        if self.strike is None:
-            raise ValidationError("VanillaSpec.strike must be provided")
-        try:
-            strike = float(self.strike)
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("VanillaSpec.strike must be numeric") from exc
-        if not np.isfinite(strike):
-            raise ValidationError("VanillaSpec.strike must be finite")
-        if strike < 0.0:
-            raise ValidationError("VanillaSpec.strike must be >= 0")
-        object.__setattr__(self, "strike", strike)
+        object.__setattr__(
+            self,
+            "strike",
+            coerce_positive_float(self.strike, name="VanillaSpec.strike", strict=False),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,17 +287,11 @@ class AsianSpec:
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
             raise ValidationError("AsianSpec.option_type must be OptionType.CALL or OptionType.PUT")
 
-        if self.strike is None:
-            raise ValidationError("AsianSpec.strike must be provided")
-        try:
-            strike = float(self.strike)
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("AsianSpec.strike must be numeric") from exc
-        if not np.isfinite(strike):
-            raise ValidationError("AsianSpec.strike must be finite")
-        if strike < 0.0:
-            raise ValidationError("AsianSpec.strike must be >= 0")
-        object.__setattr__(self, "strike", strike)
+        object.__setattr__(
+            self,
+            "strike",
+            coerce_positive_float(self.strike, name="AsianSpec.strike", strict=False),
+        )
 
         # Exactly one schedule source is required.
         if (self.fixing_dates is None) == (self.num_observations is None):
@@ -347,15 +335,11 @@ class AsianSpec:
                 "observed_average and observed_count must both be provided or both omitted."
             )
         if self.observed_average is not None:
-            try:
-                obs_avg = float(self.observed_average)
-            except (TypeError, ValueError) as exc:
-                raise ConfigurationError("observed_average must be numeric") from exc
-            if not np.isfinite(obs_avg):
-                raise ValidationError("observed_average must be finite")
-            if obs_avg <= 0.0:
-                raise ValidationError("observed_average must be > 0")
-            object.__setattr__(self, "observed_average", obs_avg)
+            object.__setattr__(
+                self,
+                "observed_average",
+                coerce_positive_float(self.observed_average, name="observed_average"),
+            )
 
             if not isinstance(self.observed_count, int) or self.observed_count < 1:
                 raise ValidationError("observed_count must be a positive integer")
@@ -464,41 +448,17 @@ class BarrierSpec:
                 f"rebate_timing must be RebateTiming enum, got {type(self.rebate_timing).__name__}"
             )
 
-        # --- strike ---
-        if self.strike is None:
-            raise ValidationError("BarrierSpec.strike must be provided")
-        try:
-            strike = float(self.strike)
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("BarrierSpec.strike must be numeric") from exc
-        if not np.isfinite(strike):
-            raise ValidationError("BarrierSpec.strike must be finite")
-        if strike < 0.0:
-            raise ValidationError("BarrierSpec.strike must be >= 0")
-        object.__setattr__(self, "strike", strike)
-
-        # --- barrier ---
-        if self.barrier is None:
-            raise ValidationError("BarrierSpec.barrier must be provided")
-        try:
-            barrier = float(self.barrier)
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("BarrierSpec.barrier must be numeric") from exc
-        if not np.isfinite(barrier):
-            raise ValidationError("BarrierSpec.barrier must be finite")
-        if barrier <= 0.0:
-            raise ValidationError("BarrierSpec.barrier must be > 0")
-        object.__setattr__(self, "barrier", barrier)
-
-        # --- rebate ---
-        try:
-            rebate = float(self.rebate)
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("BarrierSpec.rebate must be numeric") from exc
-        if not np.isfinite(rebate):
-            raise ValidationError("BarrierSpec.rebate must be finite")
-        if rebate < 0.0:
-            raise ValidationError("BarrierSpec.rebate must be >= 0")
+        object.__setattr__(
+            self,
+            "strike",
+            coerce_positive_float(self.strike, name="BarrierSpec.strike", strict=False),
+        )
+        object.__setattr__(
+            self,
+            "barrier",
+            coerce_positive_float(self.barrier, name="BarrierSpec.barrier"),
+        )
+        rebate = coerce_positive_float(self.rebate, name="BarrierSpec.rebate", strict=False)
         object.__setattr__(self, "rebate", rebate)
 
         # Knock-in rebate must be paid at expiry (AT_HIT is contradictory —
@@ -547,3 +507,13 @@ class BarrierSpec:
                 if dates[-1] > self.maturity:
                     raise ValidationError("monitoring_dates must not extend beyond maturity.")
                 object.__setattr__(self, "monitoring_dates", dates)
+
+    def is_triggered(self, spot: float) -> bool:
+        """Return ``True`` if ``spot`` has crossed the barrier.
+
+        UP barriers trigger when ``spot >= self.barrier``; DOWN barriers
+        trigger when ``spot <= self.barrier``.
+        """
+        if self.direction is BarrierDirection.UP:
+            return spot >= self.barrier
+        return spot <= self.barrier
