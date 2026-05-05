@@ -27,17 +27,19 @@ import logging
 import threading
 import numpy as np
 import pandas as pd
-from ..utils import calculate_year_fraction
+from ..utils import calculate_year_fraction, coerce_positive_float
 from ..stochastic_processes import PathSimulation, GBMProcess
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
     AsianAveraging,
+    BarrierAction,
     BarrierDirection,
     BarrierMonitoring,
     DayCountConvention,
     OptionType,
     ExerciseType,
     PricingMethod,
+    RebateTiming,
     GreekCalculationMethod,
 )
 from .monte_carlo import (
@@ -56,7 +58,7 @@ from .binomial import (
 )
 from .bsm import _BSMEuropeanValuation
 from .asian_analytical import _AnalyticalAsianValuation
-from .barrier_analytical import _AnalyticalBarrierValuation, _is_triggered
+from .barrier_analytical import _AnalyticalBarrierValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation, _FDBarrierValuation
 from ..rates import DiscountCurve
 from ..market_environment import MarketData
@@ -152,6 +154,17 @@ class UnderlyingData:
     dividend_curve: DiscountCurve | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "initial_value",
+            coerce_positive_float(self.initial_value, name="UnderlyingData.initial_value"),
+        )
+        object.__setattr__(
+            self,
+            "volatility",
+            coerce_positive_float(self.volatility, name="UnderlyingData.volatility", strict=False),
+        )
+
         if self.discrete_dividends is not None:
             cleaned: list[tuple[dt.datetime, float]] = []
             for ex_date, amount in self.discrete_dividends:
@@ -376,9 +389,6 @@ class OptionValuation:
         # Overwritten below with the defensive copy for PathSimulation.
         self._underlying = underlying
 
-        # Defensive copy: PathSimulation carries mutable simulation state
-        # (time_grid, _last_normals) that is written during simulate().
-        # Copying for thread-safety
         if isinstance(underlying, PathSimulation):
             sim_config = underlying._sim_config
 
@@ -410,7 +420,9 @@ class OptionValuation:
                             sim_config,
                             observation_dates=underlying.observation_dates | extra,
                         )
-
+            # Defensive copy: PathSimulation carries mutable simulation state
+            # (time_grid, _last_normals) that is written during simulate().
+            # Copying for thread-safety
             self._underlying = type(underlying)(
                 market_data=underlying.market_data,
                 process_params=underlying._process_params,
@@ -505,18 +517,35 @@ class OptionValuation:
         float
             First derivative of option value with respect to spot.
         """
-        self._validate_bump(epsilon, greek_calc_method, "epsilon")
         method = self._resolve_greek_method(
             greek_calc_method,
             tree_capable=True,
             grid_capable=True,
         )
+        self._validate_bump(epsilon, method, "epsilon")
         if method is GreekCalculationMethod.PATHWISE:
             return float(self._impl.delta_pathwise())
         if method is GreekCalculationMethod.LIKELIHOOD_RATIO:
             return float(self._impl.delta_lr())
         if method is not GreekCalculationMethod.NUMERICAL:
             return float(self._impl.delta())
+
+        if isinstance(self._spec, BarrierSpec) and self._barrier_triggered_at_inception():
+            # Inception-triggered short-circuit (NUMERICAL only):
+            # bump-and-revalue would cross the trigger boundary and price
+            # the un-triggered contract on the bumped spot, which is
+            # meaningless for an already-triggered barrier.  Engines handle
+            # TREE/GRID triggered greeks natively, so this branch is only
+            # reached for NUMERICAL.
+            #   • KO triggered → cashflow constant in spot → δ = 0.
+            #   • KI triggered → contract IS the vanilla equivalent; bump
+            #     there (no state transition).
+            if self._spec.action is BarrierAction.OUT:
+                return 0.0
+            return self._vanilla_equivalent_valuation().delta(
+                epsilon=epsilon,
+                greek_calc_method=GreekCalculationMethod.NUMERICAL,
+            )
 
         if epsilon is None:
             epsilon = self._underlying.initial_value / 100
@@ -555,16 +584,16 @@ class OptionValuation:
         float
             Second derivative of option value with respect to spot.
         """
-        self._validate_bump(
-            epsilon,
-            greek_calc_method,
-            "epsilon",
-            extra_allowed_methods=(GreekCalculationMethod.PATHWISE,),
-        )
         method = self._resolve_greek_method(
             greek_calc_method,
             tree_capable=True,
             grid_capable=True,
+        )
+        self._validate_bump(
+            epsilon,
+            method,
+            "epsilon",
+            extra_allowed_methods=(GreekCalculationMethod.PATHWISE,),
         )
         if method is GreekCalculationMethod.PATHWISE:
             return float(self._impl.gamma_pathwise_fd(epsilon))
@@ -575,6 +604,22 @@ class OptionValuation:
             )
         if method is not GreekCalculationMethod.NUMERICAL:
             return float(self._impl.gamma())
+
+        if isinstance(self._spec, BarrierSpec) and self._barrier_triggered_at_inception():
+            # Inception-triggered short-circuit (NUMERICAL only):
+            #   • KO triggered → cashflow constant in spot → γ = 0.
+            #   • KI triggered → contract IS the vanilla equivalent.
+            # Engines handle TREE/GRID triggered greeks natively.
+            if self._spec.action is BarrierAction.OUT:
+                return 0.0
+            return self._vanilla_equivalent_valuation().gamma(
+                epsilon=epsilon,
+                greek_calc_method=GreekCalculationMethod.NUMERICAL,
+            )
+
+        self._reject_barrier_numerical(
+            method, greek="gamma", engine_constraint=PricingMethod.MONTE_CARLO
+        )
 
         if epsilon is None:
             epsilon = self._underlying.initial_value / 100
@@ -614,14 +659,31 @@ class OptionValuation:
         float
             Vega reported per 1 vol-point (1%) change in volatility.
         """
-        self._validate_bump(epsilon, greek_calc_method, "epsilon")
         method = self._resolve_greek_method(greek_calc_method)
+        self._validate_bump(epsilon, method, "epsilon")
         if method is GreekCalculationMethod.PATHWISE:
             return float(self._impl.vega_pathwise())
         if method is GreekCalculationMethod.LIKELIHOOD_RATIO:
             return float(self._impl.vega_lr())
         if method is not GreekCalculationMethod.NUMERICAL:
             return float(self._impl.vega())
+
+        if isinstance(self._spec, BarrierSpec) and self._barrier_triggered_at_inception():
+            # Inception-triggered short-circuit (NUMERICAL only):
+            #   • KO triggered → cashflow (0 / R / R·df_r) is vol-insensitive
+            #     → ν = 0.
+            #   • KI triggered → contract IS the vanilla equivalent.
+            # The engine path is also correct here (bumping vol doesn't change
+            # the triggered cashflow), but the short-circuit avoids re-pricing
+            # and matches the delta/gamma/theta pattern.
+            if self._spec.action is BarrierAction.OUT:
+                return 0.0
+            return float(
+                self._vanilla_equivalent_valuation().vega(
+                    epsilon=epsilon,
+                    greek_calc_method=GreekCalculationMethod.NUMERICAL,
+                )
+            )
 
         if epsilon is None:
             epsilon = 0.01
@@ -662,8 +724,6 @@ class OptionValuation:
         float
             Value change per day.
         """
-        self._validate_bump(time_bump_days, greek_calc_method, "time_bump_days")
-
         # BSM analytical barrier theta: use the Black-Scholes PDE identity
         # (θ = rV − (r−q)Sδ − ½σ²S²γ) via the engine impl rather than a
         # forward-difference time bump (the former has better accuracy).
@@ -674,6 +734,7 @@ class OptionValuation:
             and time_bump_days is None
             and self._pricing_method is PricingMethod.BSM
             and isinstance(self._spec, BarrierSpec)
+            and not self._barrier_triggered_at_inception()
         ):
             return float(self._impl.theta())
 
@@ -682,6 +743,7 @@ class OptionValuation:
             tree_capable=True,
             grid_capable=True,
         )
+        self._validate_bump(time_bump_days, method, "time_bump_days")
         if method is GreekCalculationMethod.PATHWISE:
             return float(self._impl.theta_pathwise())
         if method is GreekCalculationMethod.LIKELIHOOD_RATIO:
@@ -689,8 +751,45 @@ class OptionValuation:
         if method is not GreekCalculationMethod.NUMERICAL:
             return float(self._impl.theta())
 
+        if isinstance(self._spec, BarrierSpec) and self._barrier_triggered_at_inception():
+            # Inception-triggered short-circuit (NUMERICAL only):
+            #   • KO triggered, no rebate or AT_HIT → cashflow constant in
+            #     time → θ = 0.
+            #   • KO triggered, AT_EXPIRY rebate → pv = R · df_r(T) carries
+            #     at rate r → per-day θ = r · pv / 365 (closed-form).
+            #   • KI triggered → contract IS the vanilla equivalent.
+            # Engines handle TREE/GRID triggered greeks natively.
+            spec = self._spec
+            if spec.action is BarrierAction.IN:
+                # Pass NUMERICAL + time_bump_days through (mirroring delta/gamma):
+                # the user explicitly requested bump-and-revalue, so honor that
+                # on the vanilla equivalent.
+                return float(
+                    self._vanilla_equivalent_valuation().theta(
+                        time_bump_days=time_bump_days,
+                        greek_calc_method=GreekCalculationMethod.NUMERICAL,
+                    )
+                )
+            # KO triggered:
+            if spec.rebate <= 0.0 or spec.rebate_timing is RebateTiming.AT_HIT:
+                return 0.0
+            T = self._maturity_year_fraction()
+            df_r = float(self.discount_curve.df(T))
+            pv = float(spec.rebate) * df_r
+            r = -np.log(df_r) / T
+            return float(r * pv / 365.0)
+
+        self._reject_barrier_numerical(
+            method, greek="theta", monitoring_constraint=BarrierMonitoring.DISCRETE
+        )
+
         if time_bump_days is None:
-            time_bump_days = 1.0
+            # Barriers use a longer default (7d) — see
+            # ``_BARRIER_THETA_TIME_BUMP_DAYS`` for rationale.  All other
+            # specs keep the historical 1d default.
+            time_bump_days = (
+                self._BARRIER_THETA_TIME_BUMP_DAYS if isinstance(self._spec, BarrierSpec) else 1.0
+            )
         bumped_date = self.pricing_date + dt.timedelta(days=time_bump_days)
         if bumped_date >= self.maturity:
             return 0.0
@@ -735,7 +834,6 @@ class OptionValuation:
         float
             Rho reported per 1% parallel rate move.
         """
-        self._validate_bump(rate_bump, greek_calc_method, "rate_bump")
         # Rho is exempt from the barrier-binomial NUMERICAL guard: bumping
         # the rate does not change the Boyle-Lau barrier-aligned step count
         # (the formula depends only on σ, T and log(H/S)), so the up/down
@@ -743,12 +841,40 @@ class OptionValuation:
         method = self._resolve_greek_method(
             greek_calc_method, allow_barrier_binomial_numerical=True
         )
+        self._validate_bump(rate_bump, method, "rate_bump")
         if method is GreekCalculationMethod.PATHWISE:
             return float(self._impl.rho_pathwise())
         if method is GreekCalculationMethod.LIKELIHOOD_RATIO:
             return float(self._impl.rho_lr())
         if method is not GreekCalculationMethod.NUMERICAL:
             return float(self._impl.rho())
+
+        if isinstance(self._spec, BarrierSpec) and self._barrier_triggered_at_inception():
+            # Inception-triggered short-circuit (NUMERICAL only):
+            #   • KO triggered, no rebate or AT_HIT → constant cash → ρ = 0.
+            #   • KO triggered, AT_EXPIRY rebate → pv = R · df_r(T) is rate-
+            #     sensitive only via discounting; central-diff via the disc
+            #     curve (closed-form, mirrors theta).
+            #   • KI triggered → contract IS the vanilla equivalent.
+            # The engine path is also correct here (bumping rate doesn't
+            # change barrier state), but the short-circuit avoids re-pricing.
+            spec = self._spec
+            if spec.action is BarrierAction.IN:
+                return float(
+                    self._vanilla_equivalent_valuation().rho(
+                        rate_bump=rate_bump,
+                        greek_calc_method=GreekCalculationMethod.NUMERICAL,
+                    )
+                )
+            # KO triggered:
+            if spec.rebate <= 0.0 or spec.rebate_timing is RebateTiming.AT_HIT:
+                return 0.0
+            if rate_bump is None:
+                rate_bump = 0.01
+            T = self._maturity_year_fraction()
+            df_up = float(self.discount_curve.bump_parallel_zero_rate(rate_bump / 2).df(T))
+            df_dn = float(self.discount_curve.bump_parallel_zero_rate(-rate_bump / 2).df(T))
+            return float(spec.rebate) * (df_up - df_dn) / rate_bump * 0.01
 
         if rate_bump is None:
             rate_bump = 0.01
@@ -924,7 +1050,9 @@ class OptionValuation:
                     return BinomialParams(num_steps=num_steps)
                 return BinomialParams()
             if pricing_method is PricingMethod.PDE_FD:
-                return PDEParams.for_barriers() if isinstance(spec, BarrierSpec) else PDEParams()
+                if isinstance(spec, BarrierSpec):
+                    return PDEParams.for_barriers(monitoring=spec.monitoring)
+                return PDEParams()
             return None
 
         if pricing_method is PricingMethod.MONTE_CARLO:
@@ -1008,13 +1136,41 @@ class OptionValuation:
             "the dispatcher should route BarrierSpecs to barrier engines only."
         )
         spot = float(self._underlying.initial_value)
-        if not _is_triggered(spot, self._spec.barrier, self._spec.direction):
+        if not self._spec.is_triggered(spot):
             return False
         if self._spec.monitoring is BarrierMonitoring.CONTINUOUS:
             return True
         mon_dates = self._barrier_monitoring_dates()
         assert mon_dates is not None
         return any(d == self.pricing_date for d in mon_dates)
+
+    @_memoize_result
+    def _vanilla_equivalent_valuation(self) -> OptionValuation:
+        """Return the vanilla ``OptionValuation`` that a triggered KI collapses to.
+
+        Cached per-instance so repeated greek calls on a triggered KI reuse
+        the same vanilla — the vanilla's own solve cache then survives
+        across delta/gamma/theta and matches the "one solve, three free
+        greeks" cost profile of a non-triggered native greek.
+        """
+        assert isinstance(self._spec, BarrierSpec), (
+            "_vanilla_equivalent_valuation called on non-BarrierSpec valuation."
+        )
+        spec = self._spec
+        vanilla_spec = VanillaSpec(
+            option_type=spec.option_type,
+            exercise_type=spec.exercise_type,
+            strike=spec.strike,
+            maturity=spec.maturity,
+            currency=spec.currency,
+            contract_size=spec.contract_size,
+        )
+        return OptionValuation(
+            underlying=self._underlying,
+            spec=vanilla_spec,
+            pricing_method=self._pricing_method,
+            params=self._params,
+        )
 
     def _apply_control_variate(self, base_pv: float) -> float:
         """Apply European control-variate adjustment to American base PV.
@@ -1290,9 +1446,9 @@ class OptionValuation:
     ) -> None:
         """Block NUMERICAL bump-and-revalue greeks on binomial barrier specs.
 
-        Bumping spot, volatility or time for a barrier option re-invokes
-        ``_resolve_effective_num_steps`` on each bumped valuation, and the
-        Boyle-Lau barrier-alignment formula
+        For continuous barriers, bumping spot, volatility or time for a
+        barrier option re-invokes ``_resolve_effective_num_steps`` on each
+        bumped valuation, and the Boyle-Lau barrier-alignment formula
         ``candidate = i² σ² T / log(H/S)²`` depends on every one of those
         inputs.  The bumped trees therefore end up with *different* step
         counts from the center tree, so a central difference is comparing
@@ -1300,6 +1456,15 @@ class OptionValuation:
         Rho is exempt because the risk-free rate does not enter the
         Boyle-Lau formula, so rate bumps reuse the same tree
         topology and the finite difference is well-defined.
+
+        For discrete barriers, bumping does not amend _effective_num_steps
+        but empirically, the greeks are noisy. We thus conservatively block
+        NUMERICAL greeks on  barrier-binomial specs (except rho which is
+        empirically stable).
+
+        For delta, gamma, theta, users should use native TREE Greeks
+        For rho, bump and revalue is permitted.
+        For vega, users are advised to switch pricing method to PDE_FD.
         """
         if allow:
             return
@@ -1308,6 +1473,10 @@ class OptionValuation:
         if not isinstance(self._spec, BarrierSpec):
             return
         if self._pricing_method is not PricingMethod.BINOMIAL:
+            return
+        # Inception-triggered barriers collapse to a deterministic state
+        # (KO → 0/rebate, KI → vanilla).
+        if self._barrier_triggered_at_inception():
             return
         raise UnsupportedFeatureError(
             "Binomial NUMERICAL bump-and-revalue greeks are not supported "
@@ -1318,6 +1487,71 @@ class OptionValuation:
             "Use GreekCalculationMethod.TREE for delta/gamma/theta, or "
             "switch to PricingMethod.PDE_FD for vega and for NUMERICAL "
             "bump-and-revalue on the full grid."
+        )
+
+    # Greek-specific rationales for the barrier NUMERICAL block.  Kept
+    # alongside the helper so the "what's blocked and why" is in one
+    # discoverable place rather than spread across gamma()/theta().
+    _BARRIER_NUMERICAL_REASON: dict[str, str] = {
+        "gamma": (
+            "with practical path counts the central-difference noise "
+            "dominates the |Γ| signal and sign flips occur near zero"
+        ),
+        "theta": (
+            "bump-and-revalue theta on discretely-monitored barriers is "
+            "unreliable: bumping the pricing date forces re-resolution of "
+            "the monitoring schedule (a different contract on the bumped "
+            "side)"
+        ),
+    }
+
+    def _reject_barrier_numerical(
+        self,
+        method: GreekCalculationMethod,
+        *,
+        greek: str,
+        engine_constraint: PricingMethod | None = None,
+        monitoring_constraint: BarrierMonitoring | None = None,
+    ) -> None:
+        """Block NUMERICAL bump-and-revalue greeks on barrier specs that
+        are empirically or structurally unreliable.
+
+        Two distinct greek failure modes are currently covered (see
+        ``_BARRIER_NUMERICAL_REASON``):
+
+        - Gamma on Monte Carlo barriers (any monitoring): second-derivative
+          MC noise scales as ~stderr/ε² and at practical path counts the
+          noise floor exceeds the |Γ| signal across most of parameter
+          space.  Caller passes
+          ``engine_constraint=PricingMethod.MONTE_CARLO``.
+        - Theta on any discretely-monitored barrier: bumping the pricing
+          date forces re-resolution of the monitoring schedule, so the
+          bumped contract is not the same contract — the resulting theta
+          mixes time decay with a contract-respecification artifact.
+          Affects every engine equally; caller passes
+          ``monitoring_constraint=BarrierMonitoring.DISCRETE``.  (Binomial
+          barrier NUMERICAL greeks are already blocked at a finer grain
+          by ``_reject_barrier_binomial_numerical``.)
+
+        Other greeks (delta, vega, rho) and continuous-monitoring theta
+        are not blocked.
+        """
+        if method is not GreekCalculationMethod.NUMERICAL:
+            return
+        if not isinstance(self._spec, BarrierSpec):
+            return
+        if engine_constraint is not None and self._pricing_method is not engine_constraint:
+            return
+        if monitoring_constraint is not None and self._spec.monitoring is not monitoring_constraint:
+            return
+        reason = self._BARRIER_NUMERICAL_REASON.get(
+            greek,
+            "the bump-and-revalue path is unreliable for this combination",
+        )
+        raise UnsupportedFeatureError(
+            f"Numerical {greek} is not supported for this barrier "
+            f"valuation: {reason}. Use PricingMethod.PDE_FD (GRID) or "
+            f"PricingMethod.BINOMIAL (TREE) for accurate barrier {greek}."
         )
 
     def _auto_select_greek_method(
@@ -1376,14 +1610,22 @@ class OptionValuation:
     # at most halfway to the barrier.
     _BARRIER_BUMP_MAX_FRACTION: float = 0.5
 
+    # Default time-bump (calendar days) for numerical barrier theta.
+    # 1d (the global default) is too small for MC (CRN noise dominates the
+    # finite difference) and gives questionable results for FD/binomial too.
+    # 7d performs well empirically: large enough to dampen MC
+    # noise, small enough to skip few barrier monitoring dates and stay close
+    # to instantaneous theta.
+    _BARRIER_THETA_TIME_BUMP_DAYS: float = 7.0
+
     @staticmethod
     def _validate_bump(
         bump_value: float | None,
-        greek_calc_method: GreekCalculationMethod | None,
+        resolved_method: GreekCalculationMethod,
         bump_name: str,
         extra_allowed_methods: tuple[GreekCalculationMethod, ...] = (),
     ) -> None:
-        """Validate a numerical-greek bump argument.
+        """Validate a numerical-greek bump argument against the resolved method.
 
         Two checks are bundled here so every greek entry point can run a
         single line:
@@ -1393,28 +1635,33 @@ class OptionValuation:
            are sign-symmetric so a negative spot/vol/rate bump silently
            gives the same magnitude with confusing semantics, while a
            negative ``time_bump_days`` flips the forward-difference theta.
-        2. The bump must be compatible with the chosen greek method.
-           Passing ``epsilon=...`` together with an explicit non-NUMERICAL
-           method is a contradiction — the bump would be silently ignored,
-           letting users believe they are controlling it when they aren't.
-           Auto-resolution (``greek_calc_method=None``) is exempt: users
-           may always pass a default bump in case the resolved method ends
-           up being NUMERICAL. ``extra_allowed_methods`` lets gamma also
-           accept PATHWISE (which uses a finite-difference epsilon).
+        2. The bump must be compatible with the *resolved* greek method.
+           Passing ``epsilon=...`` together with a method that doesn't use
+           a finite-difference bump (ANALYTICAL / GRID / TREE / PATHWISE
+           where applicable / LR) is a contradiction — the bump would be
+           silently ignored, letting users believe they are controlling
+           it when they aren't.  We therefore require callers to resolve
+           the method first (via ``_resolve_greek_method``) and pass the
+           resolved method here; that way the same rule applies whether
+           the user supplied an explicit method or relied on auto-select.
+           ``extra_allowed_methods`` lets e.g. gamma also accept PATHWISE
+           (which uses a finite-difference epsilon under the hood).
         """
         if bump_value is None:
             return
         if bump_value <= 0:
             raise ValidationError(f"{bump_name} must be strictly positive, got {bump_value}.")
-        if greek_calc_method is None:
+        if resolved_method is GreekCalculationMethod.NUMERICAL:
             return
-        if greek_calc_method is GreekCalculationMethod.NUMERICAL:
-            return
-        if greek_calc_method in extra_allowed_methods:
+        if resolved_method in extra_allowed_methods:
             return
         raise ValidationError(
-            f"{bump_name} is only used by NUMERICAL greeks; got "
-            f"greek_calc_method={greek_calc_method.name}."
+            f"{bump_name}={bump_value} was passed but the greek calculation "
+            f"method resolved to {resolved_method.name}, which does not use "
+            f"a finite-difference bump. Either remove {bump_name} (to use "
+            f"the analytical/grid/tree path) or pass "
+            f"greek_calc_method=GreekCalculationMethod.NUMERICAL to opt in "
+            f"to bump-and-revalue."
         )
 
     def _resolve_spot_bump(self, epsilon: float) -> float:

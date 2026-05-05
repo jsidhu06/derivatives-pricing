@@ -26,6 +26,7 @@ from derivatives_pricing.enums import (
     BarrierMonitoring,
     DayCountConvention,
     ExerciseType,
+    GreekCalculationMethod,
     OptionType,
     PricingMethod,
 )
@@ -126,12 +127,16 @@ class TestOptionValuationOutputCache:
             ),
             PricingMethod.BSM,
         )
-        d1 = ov.delta(epsilon=0.5)
-        d2 = ov.delta(epsilon=1.0)
-        assert d1 == ov.delta(epsilon=0.5)  # cache hit
-        assert d2 == ov.delta(epsilon=1.0)  # cache hit
-        assert ("delta", ("epsilon", 0.5)) in ov._cache
-        assert ("delta", ("epsilon", 1.0)) in ov._cache
+        # ``epsilon`` only applies to NUMERICAL bump-and-revalue; BSM vanilla
+        # auto-resolves to ANALYTICAL and would reject the bump kwarg.
+        num = GreekCalculationMethod.NUMERICAL
+        d1 = ov.delta(epsilon=0.5, greek_calc_method=num)
+        d2 = ov.delta(epsilon=1.0, greek_calc_method=num)
+        assert d1 == ov.delta(epsilon=0.5, greek_calc_method=num)  # cache hit
+        assert d2 == ov.delta(epsilon=1.0, greek_calc_method=num)  # cache hit
+        # Cache key sorts kwargs alphabetically: epsilon before greek_calc_method.
+        assert ("delta", ("epsilon", 0.5), ("greek_calc_method", num)) in ov._cache
+        assert ("delta", ("epsilon", 1.0), ("greek_calc_method", num)) in ov._cache
 
 
 class TestEngineLevelCaching:
@@ -313,12 +318,15 @@ class TestThreadSafeCaching:
         # spot-bump sub-valuations — with a deterministic ``epsilon`` the
         # two bumped OVs (s0+eps, s0-eps) each solve exactly once.
         # Repeat calls from many threads should not increase the count.
+        # ``epsilon`` only applies to NUMERICAL bump-and-revalue; BSM vanilla
+        # auto-resolves to ANALYTICAL and would reject the bump kwarg.
+        num = GreekCalculationMethod.NUMERICAL
         eps = 0.5
-        d1 = ov.delta(epsilon=eps)
-        results = self._concurrent_call(lambda: ov.delta(epsilon=eps))
+        d1 = ov.delta(epsilon=eps, greek_calc_method=num)
+        results = self._concurrent_call(lambda: ov.delta(epsilon=eps, greek_calc_method=num))
         assert all(r == d1 for r in results)
         # Cache now contains exactly one entry for delta at this epsilon.
-        assert ("delta", ("epsilon", eps)) in ov._cache
+        assert ("delta", ("epsilon", eps), ("greek_calc_method", num)) in ov._cache
 
 
 def _mc_gbm_process() -> GBMProcess:

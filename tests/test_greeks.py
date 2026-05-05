@@ -200,7 +200,7 @@ class TestDeltaBasicProperties(TestGreeksSetup):
         ud = self._make_ud()
         valuation = self._make_val(ud, spec, PricingMethod.BSM)
 
-        delta = valuation.delta(epsilon=0.5)
+        delta = valuation.delta(epsilon=0.5, greek_calc_method=GreekCalculationMethod.NUMERICAL)
         assert 0 < delta < 1
 
 
@@ -297,7 +297,7 @@ class TestVegaBasicProperties(TestGreeksSetup):
         ud = self._make_ud()
         valuation = self._make_val(ud, spec, PricingMethod.BSM)
 
-        vega = valuation.vega(epsilon=0.02)
+        vega = valuation.vega(epsilon=0.02, greek_calc_method=GreekCalculationMethod.NUMERICAL)
         assert vega > 0
 
 
@@ -1023,8 +1023,6 @@ _BARRIER_SPOT = 100.0
 _BARRIER_VOL = 0.25
 _BARRIER_RATE = 0.05
 _BARRIER_DIV = 0.02
-_BARRIER_NUMERICAL_SPOT_BUMP_RATIO = 0.025
-_BARRIER_NUMERICAL_THETA_DAYS = 21.0
 _BARRIER_PDE_CFG = PDEParams(
     spot_steps=800,
     time_steps=800,
@@ -1032,10 +1030,6 @@ _BARRIER_PDE_CFG = PDEParams(
     space_grid=PDESpaceGrid.LOG_SPOT,
 )
 _BARRIER_BINOM_CFG = BinomialParams(num_steps=400)
-
-
-def _barrier_numerical_spot_bump(spot: float) -> float:
-    return float(spot) * _BARRIER_NUMERICAL_SPOT_BUMP_RATIO
 
 
 _ALL_BARRIER_GREEKS: tuple[str, ...] = ("delta", "gamma", "vega", "theta", "rho")
@@ -1055,17 +1049,19 @@ def _dp_barrier_greeks_from_valuation(
     because there is no tree-native vega and NUMERICAL bump-and-revalue
     is blocked on binomial barriers (Boyle-Lau retopologises the tree on
     each vol bump).
+
+    No explicit ``epsilon`` / ``time_bump_days`` / ``rate_bump`` is passed:
+    each engine uses  its own bump default where applicable
     """
-    bump = _barrier_numerical_spot_bump(spot)
     result: dict[str, float] = {}
     if "delta" in greeks:
-        result["delta"] = ov.delta(epsilon=bump)
+        result["delta"] = ov.delta()
     if "gamma" in greeks:
-        result["gamma"] = ov.gamma(epsilon=bump)
+        result["gamma"] = ov.gamma()
     if "vega" in greeks:
         result["vega"] = ov.vega()
     if "theta" in greeks:
-        result["theta"] = ov.theta(time_bump_days=_BARRIER_NUMERICAL_THETA_DAYS)
+        result["theta"] = ov.theta()
     if "rho" in greeks:
         result["rho"] = ov.rho()
     return result
@@ -1814,6 +1810,11 @@ def test_european_barrier_mc_greeks_vs_bsm(direction, action, option_type, strik
     which is essentially exact. MC uses NUMERICAL bump-and-revalue on
     simulated paths with a fixed seed.
     """
+    # Gamma is excluded: NUMERICAL bump-and-revalue gamma on MC barriers is
+    # blocked at the OV level (second-derivative noise floor exceeds |Γ|
+    # signal at practical path counts; sign flips occur near zero).  See
+    # ``OptionValuation._reject_barrier_numerical`` for the rationale.
+    barrier_greeks = ("delta", "vega", "theta", "rho")
     dp_bsm = _dp_barrier_greeks(
         pricing_method=PricingMethod.BSM,
         exercise_type=ExerciseType.EUROPEAN,
@@ -1822,6 +1823,7 @@ def test_european_barrier_mc_greeks_vs_bsm(direction, action, option_type, strik
         barrier=barrier,
         option_type=option_type,
         strike=strike,
+        greeks=barrier_greeks,
     )
     dp_mc = _dp_barrier_mc_greeks(
         exercise_type=ExerciseType.EUROPEAN,
@@ -1830,10 +1832,11 @@ def test_european_barrier_mc_greeks_vs_bsm(direction, action, option_type, strik
         barrier=barrier,
         option_type=option_type,
         strike=strike,
+        greeks=barrier_greeks,
     )
 
     # MC bump-and-revalue noise on barrier payoffs is substantial; loose tols.
-    tols = {"delta": 0.05, "gamma": 0.20, "vega": 0.10, "theta": 0.10, "rho": 0.05}
+    tols = {"delta": 0.05, "vega": 0.10, "theta": 0.10, "rho": 0.05}
     assert_greeks_close(
         lhs=dp_mc,
         rhs=dp_bsm,

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from .market_environment import MarketData, CorrelationContext
 from .enums import DayCountConvention
-from .utils import calculate_year_fraction, validate_naive_datetime
+from .utils import calculate_year_fraction, coerce_positive_float, validate_naive_datetime
 from .rates import DiscountCurve
 from .exceptions import ConfigurationError, ValidationError
 
@@ -121,16 +121,16 @@ class GBMParams:
     dividend_curve: DiscountCurve | None = None
 
     def __post_init__(self) -> None:
-        if self.initial_value is None:
-            raise ValidationError("GBMParams requires initial_value to be not None")
-        if self.volatility is None:
-            raise ValidationError("GBMParams requires volatility to be not None")
-        if not np.isfinite(float(self.initial_value)):
-            raise ValidationError("GBMParams requires initial_value to be finite")
-        if not np.isfinite(float(self.volatility)):
-            raise ValidationError("GBMParams requires volatility to be finite")
-        if float(self.volatility) < 0.0:
-            raise ValidationError("GBMParams requires volatility to be >= 0")
+        object.__setattr__(
+            self,
+            "initial_value",
+            coerce_positive_float(self.initial_value, name="GBMParams.initial_value"),
+        )
+        object.__setattr__(
+            self,
+            "volatility",
+            coerce_positive_float(self.volatility, name="GBMParams.volatility", strict=False),
+        )
         object.__setattr__(
             self,
             "discrete_dividends",
@@ -177,16 +177,16 @@ class JDParams:
     dividend_curve: DiscountCurve | None = None
 
     def __post_init__(self) -> None:
-        if self.initial_value is None:
-            raise ValidationError("JDParams requires initial_value to be not None")
-        if self.volatility is None:
-            raise ValidationError("JDParams requires volatility to be not None")
-        if not np.isfinite(float(self.initial_value)):
-            raise ValidationError("JDParams requires initial_value to be finite")
-        if not np.isfinite(float(self.volatility)):
-            raise ValidationError("JDParams requires volatility to be finite")
-        if float(self.volatility) < 0.0:
-            raise ValidationError("JDParams requires volatility to be >= 0")
+        object.__setattr__(
+            self,
+            "initial_value",
+            coerce_positive_float(self.initial_value, name="JDParams.initial_value"),
+        )
+        object.__setattr__(
+            self,
+            "volatility",
+            coerce_positive_float(self.volatility, name="JDParams.volatility", strict=False),
+        )
 
         if self.lambd is None or self.mu is None or self.delta is None:
             raise ValidationError("JDParams requires lambd, mu, and delta to be not None")

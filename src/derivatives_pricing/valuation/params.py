@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace as dc_replace
 from typing import Any
 import warnings
 
-from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid
+from ..enums import BarrierMonitoring, PDEEarlyExercise, PDEMethod, PDESpaceGrid
 from ..exceptions import ValidationError
 
 
@@ -21,8 +21,13 @@ class MonteCarloParams:
     Attributes
     ----------
     random_seed:
-        Random seed for reproducibility. If None, uses random state.
-        Default: ``None``.
+        Random seed for reproducibility. The default is fixed (not None) so
+        that bump-and-revalue greeks share common random numbers — without CRN,
+        the sampling noise dominates the central-difference signal at typical path
+        counts (especially for gamma and tight bumps).  Pass ``None``
+        explicitly to use fresh entropy each call (e.g. for portfolio-level
+        risk where you want noise to diversify across positions).
+        Default: ``42``.
     deg:
         Laguerre polynomial degree for Longstaff-Schwartz regression
         (American only). Typical range: 2-3. Default: ``3``.
@@ -55,7 +60,7 @@ class MonteCarloParams:
         Default: ``True``. Only applicable to KO barrier options; ignored otherwise.
     """
 
-    random_seed: int | None = None
+    random_seed: int | None = 42
     deg: int = 3
     ridge_lambda: float = 1e-8
     min_itm: int = 25
@@ -237,15 +242,50 @@ class PDEParams:
     log_timings: bool = False
 
     @classmethod
-    def for_barriers(cls, **overrides: Any) -> PDEParams:
-        """Create params that mirror the library's internal barrier defaults.
+    def for_barriers(
+        cls,
+        *,
+        monitoring: BarrierMonitoring,
+        **overrides: Any,
+    ) -> PDEParams:
+        """Create PDE params tuned for barrier pricing.
 
         Returns a ``PDEParams`` instance with a finer grid and log-spot
-        spatial discretization suitable for barrier pricing.  Any keyword
-        argument accepted by the constructor can be passed to override
-        individual fields.
+        spatial discretization suitable for barrier pricing.  The time-
+        marching ``method`` is chosen from ``monitoring``:
+
+        - ``BarrierMonitoring.CONTINUOUS`` → ``PDEMethod.CRANK_NICOLSON``.
+          Continuous monitoring has a single payoff discontinuity at
+          maturity; the default ``rannacher_steps=2`` startup dampens it
+          and CN's higher-order time accuracy gives the best PV/greek
+          quality on the rest of the time march.
+        - ``BarrierMonitoring.DISCRETE`` → ``PDEMethod.IMPLICIT``.
+          Discrete monitoring projects ``V(S, t_i) = 0`` past the
+          barrier at every observation date, introducing a fresh step
+          discontinuity each time.  CN is only A-stable
+          (Pooley-Forsyth-Vetzal, 2003).  ``IMPLICIT`` is L-stable and
+          empirically performs slightly better than CN at the same grid
+          resolution for discrete barriers, so it's the default here.
+
+        ``monitoring`` is required (no default) so the dependency is
+        explicit at the call site.  Any other keyword argument accepted
+        by the constructor can be passed to override individual fields,
+        including ``method``.
         """
-        defaults = cls(spot_steps=1200, time_steps=800, space_grid=PDESpaceGrid.LOG_SPOT)
+        if monitoring is BarrierMonitoring.DISCRETE:
+            method = PDEMethod.IMPLICIT
+            spot_steps, time_steps = 1600, 1200
+        else:
+            method = PDEMethod.CRANK_NICOLSON
+            spot_steps, time_steps = 1200, 800
+
+        defaults = cls(
+            spot_steps=spot_steps,
+            time_steps=time_steps,
+            space_grid=PDESpaceGrid.LOG_SPOT,
+            method=method,
+        )
+
         return dc_replace(defaults, **overrides) if overrides else defaults
 
     def __post_init__(self) -> None:

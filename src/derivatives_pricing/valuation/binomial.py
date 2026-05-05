@@ -28,7 +28,6 @@ from ..exceptions import (
     ValidationError,
 )
 from .params import BinomialParams
-from .barrier_analytical import _is_triggered
 
 if TYPE_CHECKING:
     from .core import AsianSpec, BarrierSpec, OptionValuation, UnderlyingData
@@ -972,7 +971,7 @@ class _BinomialBarrierValuation(_BinomialValuationBase):
         #     `_solve_backward` (not the barrier-aware solver), so barrier
         #     alignment is irrelevant.
         # Skip both the inflation and any warning for those cases.
-        if _is_triggered(spot, barrier, self.spec.direction):
+        if self.spec.is_triggered(spot):
             return base_steps
 
         log_distance = np.log(max(spot, barrier) / min(spot, barrier))
@@ -1054,6 +1053,69 @@ class _BinomialBarrierValuation(_BinomialValuationBase):
         T = self.valuation_ctx._maturity_year_fraction()
         dt = T / num_steps
         return option_lattice, spot_lattice, dt
+
+    def _stencil_straddles_barrier(self, step: int) -> bool:
+        """Return True if any node at ``step`` lies on the wrong side of the barrier.
+
+        The Hull tree-greek formulas assume the option value is locally smooth
+        in spot.  When a node within the extraction stencil sits at or beyond
+        the barrier, the absorbing-boundary discontinuity (KO → 0 or rebate,
+        or KI → vanilla) injects a step-function jump that the central-difference
+        formulas misread as huge curvature.  This check is the precondition
+        for a sensible delta (step=1) or gamma (step=2) extraction.
+
+        Triggered-at-inception barriers are exempt: a triggered KO collapses
+        to a lattice that is independent of spot (no discontinuity left), and a triggered
+        KI prices as the vanilla underlying (also smooth).  Discretely
+        monitored barriers are also exempt since the absorbing transition only
+        happens at monitoring nodes, which don't coincide with intermediate
+        tree steps in general.
+        """
+        if self.spec.monitoring is not BarrierMonitoring.CONTINUOUS:
+            return False
+        if self.valuation_ctx._barrier_triggered_at_inception():
+            return False
+        _, _, spot_lattice = self._setup_binomial_parameters()
+        nodes = spot_lattice[: step + 1, step]
+        if self.spec.direction is BarrierDirection.UP:
+            return bool(np.any(nodes >= self.spec.barrier))
+        return bool(np.any(nodes <= self.spec.barrier))
+
+    def delta(self) -> float:
+        """Tree delta with a near-barrier safety guard.
+
+        See :meth:`_BinomialValuationBase.delta` for the formula.  Raises
+        :class:`UnsupportedFeatureError` if the step-1 extraction stencil
+        already crosses the barrier — at that point Hull's central-difference
+        formula is reading across the absorbing-boundary discontinuity and
+        the result is unreliable. Use ``PricingMethod.PDE_FD`` instead.
+        """
+        if self._stencil_straddles_barrier(step=1):
+            raise UnsupportedFeatureError(
+                "Binomial tree delta is unreliable when the step-1 extraction "
+                "stencil straddles the barrier (spot is too close to H, so "
+                "the up- or down-node lies past the absorbing boundary). "
+                "Use PricingMethod.PDE_FD for greeks in this regime."
+            )
+        return super().delta()
+
+    def gamma(self) -> float:
+        """Tree gamma with a near-barrier safety guard.
+
+        See :meth:`_BinomialValuationBase.gamma` for the formula.  Raises
+        :class:`UnsupportedFeatureError` if the step-2 extraction stencil
+        crosses the barrier — Hull's three-node central difference
+        misreads the absorbing-boundary jump as huge curvature in that
+        case.  Use ``PricingMethod.PDE_FD`` for near-barrier greeks.
+        """
+        if self._stencil_straddles_barrier(step=2):
+            raise UnsupportedFeatureError(
+                "Binomial tree gamma is unreliable when the step-2 extraction "
+                "stencil straddles the barrier (one of the uu/dd nodes lies "
+                "past the absorbing boundary). Use PricingMethod.PDE_FD for "
+                "greeks in this regime."
+            )
+        return super().gamma()
 
     def _ko_rebate_values(
         self,

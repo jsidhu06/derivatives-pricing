@@ -1852,6 +1852,16 @@ def _fd_barrier_ko_core(
     else:
         payoff = np.maximum(S - strike, 0.0)
 
+    # American exercise intrinsic is the holder's exercise value at any
+    # in-life moment, which is the vanilla payoff — independent of any
+    # KO-zone modification applied to the maturity payoff below.  Under
+    # discrete monitoring the holder can exercise between observations
+    # even when sitting in the KO zone, so the PSOR floor must use the
+    # unmodified vanilla intrinsic.  (For continuous KO the grid is
+    # truncated at the barrier and the KO zone is absent from the grid,
+    # so the same vanilla array is also correct on the alive side.)
+    intrinsic = payoff.copy() if early_exercise else None
+
     # For continuous KO: payoff is zero on the barrier side (enforced
     # by grid truncation since the barrier is at the boundary).
     # For discrete KO: zero out the payoff on the knocked-out side at maturity
@@ -1866,7 +1876,6 @@ def _fd_barrier_ko_core(
                 payoff[S >= barrier] = 0.0
 
     V = payoff.copy()
-    intrinsic = payoff if early_exercise else None
 
     # ── Dividend schedule ─────────────────────────────────────────────
     schedule = dividend_schedule or []
@@ -2612,22 +2621,6 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         ttm = self.valuation_ctx._maturity_year_fraction()
         return float(self._spec.rebate) * float(self.valuation_ctx.discount_curve.df(ttm))
 
-    def _vanilla_equivalent_valuation(self) -> OptionValuation:
-        from .core import OptionValuation
-
-        vanilla_spec = VanillaSpec(
-            option_type=self._spec.option_type,
-            exercise_type=self._spec.exercise_type,
-            strike=self._spec.strike,
-            maturity=self._spec.maturity,
-        )
-        return OptionValuation(
-            underlying=self.underlying,
-            spec=vanilla_spec,
-            pricing_method=self.valuation_ctx.pricing_method,
-            params=self.valuation_ctx.params,
-        )
-
     def _last_dtau(self) -> float:
         solve_args = self._base_solve_args()
         time_to_maturity = float(solve_args["time_to_maturity"])
@@ -2807,7 +2800,7 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         if self.valuation_ctx._barrier_triggered_at_inception():
             if spec.action is BarrierAction.OUT:
                 return 0.0
-            return self._vanilla_equivalent_valuation().delta()
+            return self.valuation_ctx._vanilla_equivalent_valuation().delta()
 
         if self._is_european_ki():
             ko_result, van_result = self._solve_european_ki_components()
@@ -2824,7 +2817,7 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         if self.valuation_ctx._barrier_triggered_at_inception():
             if spec.action is BarrierAction.OUT:
                 return 0.0
-            return self._vanilla_equivalent_valuation().gamma()
+            return self.valuation_ctx._vanilla_equivalent_valuation().gamma()
 
         if self._is_european_ki():
             ko_result, van_result = self._solve_european_ki_components()
@@ -2840,7 +2833,7 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         if self.valuation_ctx._barrier_triggered_at_inception():
             if spec.action is BarrierAction.OUT:
                 return self._resolved_knock_out_theta()
-            return self._vanilla_equivalent_valuation().theta()
+            return self.valuation_ctx._vanilla_equivalent_valuation().theta()
 
         if self._is_european_ki():
             ko_result, van_result = self._solve_european_ki_components()
@@ -2918,7 +2911,7 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
                 if triggered_value is None:
                     raise ConfigurationError("Resolved knock-out state unexpectedly unavailable")
                 return triggered_value
-            return self._vanilla_equivalent_valuation().present_value()
+            return self.valuation_ctx._vanilla_equivalent_valuation().present_value()
         spec = self._spec
         label = f"PDE barrier {'American' if spec.exercise_type is ExerciseType.AMERICAN else 'European'}"
         with log_timing(logger, f"{label} present_value", self.pde_params.log_timings):

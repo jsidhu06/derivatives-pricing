@@ -708,6 +708,7 @@ def test_pde_fd_barrier_european_ki_facade_vs_direct_core_greeks(
         rebate_timing=RebateTiming.AT_EXPIRY,
     )
     params = PDEParams.for_barriers(
+        monitoring=BarrierMonitoring.CONTINUOUS,
         spot_steps=800,
         time_steps=800,
     )
