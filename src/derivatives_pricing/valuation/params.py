@@ -259,31 +259,39 @@ class PDEParams:
           maturity; the default ``rannacher_steps=2`` startup dampens it
           and CN's higher-order time accuracy gives the best PV/greek
           quality on the rest of the time march.
-        - ``BarrierMonitoring.DISCRETE`` → ``PDEMethod.IMPLICIT``.
-          Discrete monitoring projects ``V(S, t_i) = 0`` past the
-          barrier at every observation date, introducing a fresh step
-          discontinuity each time.  CN is only A-stable
-          (Pooley-Forsyth-Vetzal, 2003).  ``IMPLICIT`` is L-stable and
-          empirically performs slightly better than CN at the same grid
-          resolution for discrete barriers, so it's the default here.
+        - ``BarrierMonitoring.DISCRETE`` → ``PDEMethod.EXPLICIT_HULL`` with
+          ``american_solver=PDEEarlyExercise.INTRINSIC``.  Discrete
+          monitoring projects ``V(S, t_i) = 0`` past the barrier at every
+          observation date, introducing a fresh step discontinuity each
+          time.  ``EXPLICIT_HULL``'s per-step cost is a single vectorised
+          matrix-vector multiply, so we can crank
+          ``time_steps`` up cheaply.  Time-stepping resolution dominates
+          accuracy for discrete barriers (each small Δt damps the reset
+          discontinuities within a few steps).
 
         ``monitoring`` is required (no default) so the dependency is
         explicit at the call site.  Any other keyword argument accepted
         by the constructor can be passed to override individual fields,
-        including ``method``.
+        including ``method``.  Note: if you bump ``spot_steps`` much
+        higher without also bumping ``time_steps``, the runtime CFL
+        check (``_check_explicit_spot_stability``) may warn — keep the
+        ratio roughly ``time_steps ≥ 2 × spot_steps`` for σ ~ 0.25.
         """
         if monitoring is BarrierMonitoring.DISCRETE:
-            method = PDEMethod.IMPLICIT
-            spot_steps, time_steps = 1600, 1200
+            method = PDEMethod.EXPLICIT_HULL
+            spot_steps, time_steps = 1200, 3000
+            american_solver = PDEEarlyExercise.INTRINSIC
         else:
             method = PDEMethod.CRANK_NICOLSON
             spot_steps, time_steps = 1200, 800
+            american_solver = PDEEarlyExercise.GAUSS_SEIDEL
 
         defaults = cls(
             spot_steps=spot_steps,
             time_steps=time_steps,
             space_grid=PDESpaceGrid.LOG_SPOT,
             method=method,
+            american_solver=american_solver,
         )
 
         return dc_replace(defaults, **overrides) if overrides else defaults

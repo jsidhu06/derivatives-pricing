@@ -543,16 +543,12 @@ class _AnalyticalBarrierValuation:
             H = _broadie_glasserman_adjustment(H, sigma, T, spec.num_observations, spec.direction)
 
         # ── No-rebate barrier value ──
-        # The Reiner-Rubinstein formulas contain (H/S)**(2*lambda) with
-        # lambda = (r - q + sigma^2/2)/sigma^2, and d1/x1/y/y1 each divide
-        # by sigma*sqrt(T).  As sigma -> 0 we either divide by zero (when
-        # computing lambda or any of the d/x/y terms) or blow up at
-        # (H/S)**(2*lambda).  Most operations promote to numpy.float64 (via
-        # np.log/np.sqrt) so the failure mode is silent inf/nan +
-        # RuntimeWarning -- np.errstate converts those into
-        # FloatingPointError so we can fall back to the closed-form
-        # deterministic-forward price.  OverflowError / ZeroDivisionError
-        # are caught in case any operation stays in Python-float arithmetic.
+        # Reiner-Rubinstein contains ``(H/S)**(2*lambda)`` and divides by
+        # ``sigma*sqrt(T)``, so ``sigma -> 0`` produces inf/nan via numpy
+        # promotion or OverflowError/ZeroDivisionError in pure-Python
+        # paths.  Catch both (``np.errstate`` turns the silent
+        # floating-point case into ``FloatingPointError``) and fall back
+        # to the deterministic-forward closed form below.
         with np.errstate(over="raise", invalid="raise", divide="raise"):
             try:
                 value = _barrier_price_no_rebate(
