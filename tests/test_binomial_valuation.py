@@ -121,8 +121,14 @@ class TestBinomialValuation:
     @pytest.mark.parametrize(
         ("monitoring", "num_observations", "expected_adjusted_steps"),
         [
+            # Continuous: on-node Boyle-Lau alignment (places a CRR layer
+            # exactly on H).
             (BarrierMonitoring.CONTINUOUS, None, True),
-            (BarrierMonitoring.DISCRETE, 12, False),
+            # Discrete: half-step alignment (places H midway between two
+            # CRR layers — the Cheuk-Vorst / Boyle-Tian analog for the
+            # binomial-probability geometry).  Discrete now also adjusts
+            # steps; was previously a no-op pre-half-step-fix.
+            (BarrierMonitoring.DISCRETE, 12, True),
         ],
     )
     def test_binomial_barrier_uses_correct_effective_steps(

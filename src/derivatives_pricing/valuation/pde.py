@@ -7,6 +7,10 @@ Current scope
 -------------
 PDE via finite differences for European and American options:
 - vanilla call/put and custom payoffs (PayoffSpec)
+- barrier options (BarrierSpec): continuous KO via truncated-grid
+  Dirichlet BC, continuous KI via in-out parity (European) and
+  two-surface coupled PDE solver (American), discrete monitoring
+  via full-grid resets at observation dates
 - time stepping: implicit, explicit, or Crank–Nicolson
 - optional Rannacher smoothing for Crank–Nicolson
 - spatial grids: spot or log-spot
@@ -15,11 +19,8 @@ PDE via finite differences for European and American options:
 Discrete barriers
 -----------------
 Uses Boyle-Tian-inspired half-step barrier placement for discrete
-monitoring.  This tends to improve accuracy when the monitoring interval
-is not too fine relative to the PDE grid time-step.  If monitoring is
-extremely dense relative to the PDE grid, the correction can over-shift;
-in that regime the contract is close to continuously monitored and
-``BarrierMonitoring.CONTINUOUS`` is usually the better model choice.
+monitoring: H is centred halfway between adjacent spatial nodes to
+reduce the leading grid-alignment bias in the barrier reset.
 """
 
 from __future__ import annotations
@@ -389,30 +390,25 @@ def _build_log_grid(
     anchor_spot: float | None = None,
     anchor_half_step: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, float]:
-    """Build log-spot grid.
+    """Build a log-spot grid.
 
-    For the explicit-family schemes (``EXPLICIT``, ``EXPLICIT_HULL``) the
-    grid construction preserves Hull's heuristic scale
-    ``dz_hull = vol * sqrt(3 * dt)`` when the target log-domain fits within
-    ``spot_steps * dz_hull``. For ``EXPLICIT_HULL`` this is the special
-    spacing that recovers the trinomial-equivalent explicit discretization
-    with up/mid/down probabilities ``1/6, 2/3, 1/6``.
+    ``dz`` selection by scheme:
 
-    For unconditionally stable schemes (``IMPLICIT``, ``CRANK_NICOLSON``)
-    ``spot_steps`` controls the spatial density directly:
-    ``dz = (zmax_target - zmin_target) / spot_steps``.
+    - **Explicit family** (``EXPLICIT``, ``EXPLICIT_HULL``): targets Hull's
+      stability scale ``dz_hull = vol * sqrt(3 * dt)`` — the trinomial-
+      equivalent spacing with up/mid/down probabilities ``1/6, 2/3, 1/6``.
+      Falls back to ``(zmax_target - zmin_target) / spot_steps`` if Hull's
+      grid is too narrow to cover the target span.
+    - **Unconditionally stable** (``IMPLICIT``, ``CRANK_NICOLSON``):
+      ``dz = (zmax_target - zmin_target) / spot_steps`` directly.
 
-    When ``anchor_spot`` is provided, the grid is sized so that the anchor
-    lies exactly on an interior node by default. If ``anchor_half_step`` is
-    true, the anchor instead lies halfway between two adjacent nodes. In both
-    cases the resulting domain is a (possibly slight) superset of
-    ``[zmin_target, zmax_target]``. For CN/IMPLICIT this is achieved by
-    recomputing ``dz`` from the binding half (left or right of the anchor),
-    i.e. the side that requires the larger uniform ``dz`` to keep the anchor
-    on-node or at a cell midpoint while still covering the target domain. The
-    other side can then have up to roughly one cell of slack. For explicit
-    schemes ``dz`` is fixed by Hull's stability heuristic, so the grid is
-    shifted in place while keeping strict cover of the target domain.
+    When ``anchor_spot`` is provided, the grid is sized so the anchor sits
+    exactly on an interior node (or halfway between two nodes when
+    ``anchor_half_step=True``).  The resulting domain is a (possibly slight)
+    superset of ``[zmin_target, zmax_target]``.  CN/IMPLICIT grows ``dz`` on
+    the binding half (the side of the anchor that needs the larger ``dz``
+    to cover its target half); explicit schemes keep ``dz`` fixed by
+    stability and shift the grid in place instead.
     """
     if anchor_half_step and anchor_spot is None:
         raise ValidationError("anchor_half_step requires anchor_spot to be provided")
@@ -463,13 +459,12 @@ def _build_log_grid(
     anchor_offset = 0.5 if anchor_half_step else 0.0
 
     if method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL):
-        # Explicit schemes use Hull's dz_hull heuristic, which leaves
-        # ``grid_width = spot_steps * dz`` strictly larger than the
-        # target span (when not capped). dz is fixed by stability, so
-        # we shift the grid in place while keeping strict cover of
-        # ``[zmin_target, zmax_target]``. If the target span is already
-        # capped exactly by ``spot_steps * dz``, exact anchoring is only
-        # possible when the anchor happens to lie on that fixed grid.
+        # Explicit: ``dz`` is fixed by Hull's stability heuristic, so
+        # shift the grid in place while preserving cover of
+        # ``[zmin_target, zmax_target]``.  If the target span is binding
+        # (already tight to ``spot_steps * dz``), exact anchoring is only
+        # feasible when the anchor lies on the fixed-dz grid — or, when
+        # ``anchor_half_step=True``, halfway between two fixed-dz nodes.
         j_min = max(
             0,
             int(math.ceil((z_anchor - zmin_target) / dz - anchor_offset - 1.0e-12)),
@@ -483,21 +478,18 @@ def _build_log_grid(
         preferred_index = int(round((z_anchor - zmin) / dz - anchor_offset))
         j_anchor = min(max(preferred_index, j_min), j_max)
     else:
-        # CN/IMPLICIT: dz is free, so instead of shifting a fixed-dz
-        # grid (which forces an unsatisfiable strict-cover constraint
-        # when dz exactly tiles the target span), we *grow* dz on the
-        # binding half. Pick the integer node closest to where the
-        # anchor naturally falls, then compute the dz required to cover
-        # the left and right halves separately; whichever side requires
-        # the larger dz is the binding side, and the other side absorbs
-        # the slack. The result is a uniform grid that:
+        # CN/IMPLICIT: ``dz`` is free, so *grow* it on the binding half
+        # rather than shift a fixed-dz grid (which has an unsatisfiable
+        # strict-cover constraint when ``dz`` exactly tiles the target).
+        # Pick the integer node closest to where the anchor falls, then
+        # take the larger of the left/right ``dz`` needed to cover each
+        # half.  The resulting grid:
         #   - places the anchor exactly on an interior node,
         #   - is strictly tight to the target on the binding side,
         #   - has up to one cell of slack outside the target on the
-        #     other side (i.e. a slight superset of the target — never
-        #     under-covers),
-        #   - costs at most ~1/(spot_steps - 1) extra dz vs the bare-
-        #     minimum tile of the target span.
+        #     other side (slight superset — never under-covers),
+        #   - costs at most ~1/(spot_steps - 1) extra ``dz`` vs the
+        #     bare-minimum tile of the target span.
         span = zmax_target - zmin_target
         j_opt = int(round(spot_steps * (z_anchor - zmin_target) / span - anchor_offset))
         j_anchor = max(0 if anchor_half_step else 1, min(spot_steps - 1, j_opt))
@@ -559,18 +551,18 @@ def _spot_operator_coeffs(
     risk_free_rate: float,
     dividend_rate: float,
     volatility: float,
-    hull_discounting: bool = False,
+    implicit_discounting: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Spatial operator coefficients on the spot grid.
 
-    When *hull_discounting* is True (Hull's explicit scheme), the rV
+    When *implicit_discounting* is True (Hull's explicit scheme), the rV
     term is excluded from beta and instead applied as an implicit
     divisor ``1 / (1 + r * dt)`` in the time-step function.
     """
     diffusion = (volatility**2) * (spot_values**2) / (dS**2)
     drift = (risk_free_rate - dividend_rate) * spot_values / dS
     gamma = 0.5 * (diffusion - drift)
-    beta = -diffusion if hull_discounting else -(diffusion + risk_free_rate)
+    beta = -diffusion if implicit_discounting else -(diffusion + risk_free_rate)
     alpha = 0.5 * (diffusion + drift)
     return gamma, beta, alpha
 
@@ -581,7 +573,7 @@ def _log_operator_coeffs(
     risk_free_rate: float,
     dividend_rate: float,
     volatility: float,
-    hull_discounting: bool = False,
+    implicit_discounting: bool = False,
     size: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Spatial operator coefficients on the log-spot grid.
@@ -590,14 +582,14 @@ def _log_operator_coeffs(
     signature of ``_spot_operator_coeffs`` so callers can treat both
     grids uniformly.
 
-    When *hull_discounting* is True (Hull's explicit scheme), r is
+    When *implicit_discounting* is True (Hull's explicit scheme), r is
     excluded from beta.
     """
     mu = risk_free_rate - dividend_rate - 0.5 * volatility**2
     diffusion = (volatility**2) / (dz**2)
     drift = mu / dz
     gamma = np.full(size, 0.5 * (diffusion - drift))
-    beta = np.full(size, -diffusion if hull_discounting else -(diffusion + risk_free_rate))
+    beta = np.full(size, -diffusion if implicit_discounting else -(diffusion + risk_free_rate))
     alpha = np.full(size, 0.5 * (diffusion + drift))
     return gamma, beta, alpha
 
@@ -840,7 +832,7 @@ def _check_explicit_spot_stability(
     time_to_maturity: float,
     discount_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None,
-    hull_discounting: bool,
+    implicit_discounting: bool,
 ) -> None:
     r"""CFL-style stability checks for an explicit scheme on a uniform spot grid.
 
@@ -848,7 +840,7 @@ def _check_explicit_spot_stability(
 
         dt <= dS² / (σ² S_max²)
 
-    When *hull_discounting* is ``False`` (pure explicit), the reaction
+    When *implicit_discounting* is ``False`` (pure explicit), the reaction
     term :math:`-rV` is discretised explicitly too, giving the tighter
     bound::
 
@@ -891,7 +883,7 @@ def _check_explicit_spot_stability(
     # (A) Diffusion CFL bound
     diffusion_max = (volatility**2) * (smax**2) / (dS**2)
 
-    if hull_discounting:
+    if implicit_discounting:
         # r handled implicitly — only diffusion constrains dt
         dt_max = 1.0 / diffusion_max
         mode = "Hull implicit discounting"
@@ -1088,7 +1080,7 @@ def _fd_core(
             time_to_maturity=time_to_maturity,
             discount_curve=discount_curve,
             dividend_curve=dividend_curve,
-            hull_discounting=method is PDEMethod.EXPLICIT_HULL,
+            implicit_discounting=method is PDEMethod.EXPLICIT_HULL,
         )
 
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
@@ -1119,7 +1111,7 @@ def _fd_core(
         else:
             q = 0.0
 
-        hull_discounting = method_used is PDEMethod.EXPLICIT_HULL
+        implicit_discounting = method_used is PDEMethod.EXPLICIT_HULL
 
         if space_grid is PDESpaceGrid.SPOT:
             gamma, beta, alpha = _spot_operator_coeffs(
@@ -1128,7 +1120,7 @@ def _fd_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
-                hull_discounting=hull_discounting,
+                implicit_discounting=implicit_discounting,
             )
         else:
             gamma, beta, alpha = _log_operator_coeffs(
@@ -1136,7 +1128,7 @@ def _fd_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
-                hull_discounting=hull_discounting,
+                implicit_discounting=implicit_discounting,
                 size=spot_steps - 1,
             )
 
@@ -1177,7 +1169,7 @@ def _fd_core(
                 left,
                 right,
                 intrinsic_for_step,
-                r_dt=r * d_tau if hull_discounting else 0.0,
+                r_dt=r * d_tau if implicit_discounting else 0.0,
             )
         else:
             V, psor_iters = _implicit_cn_step(
@@ -1637,7 +1629,7 @@ class _FDAmericanValuation(_FDValuationBase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Barrier option PDE
+# Barrier option FD
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -1852,14 +1844,11 @@ def _fd_barrier_ko_core(
     else:
         payoff = np.maximum(S - strike, 0.0)
 
-    # American exercise intrinsic is the holder's exercise value at any
-    # in-life moment, which is the vanilla payoff — independent of any
-    # KO-zone modification applied to the maturity payoff below.  Under
-    # discrete monitoring the holder can exercise between observations
-    # even when sitting in the KO zone, so the PSOR floor must use the
-    # unmodified vanilla intrinsic.  (For continuous KO the grid is
-    # truncated at the barrier and the KO zone is absent from the grid,
-    # so the same vanilla array is also correct on the alive side.)
+    # American intrinsic = vanilla payoff at any in-life moment, regardless of
+    # KO-zone modifications applied at maturity below.  Discrete monitoring
+    # needs this: between obs dates the holder can exercise even sitting in
+    # the KO zone.  (For continuous KO the grid is truncated at the barrier,
+    # so the alive-side array is the only one that exists — same logic holds.)
     intrinsic = payoff.copy() if early_exercise else None
 
     # For continuous KO: payoff is zero on the barrier side (enforced
@@ -1910,7 +1899,7 @@ def _fd_barrier_ko_core(
             time_to_maturity=time_to_maturity,
             discount_curve=discount_curve,
             dividend_curve=dividend_curve,
-            hull_discounting=method is PDEMethod.EXPLICIT_HULL,
+            implicit_discounting=method is PDEMethod.EXPLICIT_HULL,
         )
 
     # ── Time-stepping ─────────────────────────────────────────────────
@@ -1941,7 +1930,7 @@ def _fd_barrier_ko_core(
         else:
             q = 0.0
 
-        hull_discounting = method_used is PDEMethod.EXPLICIT_HULL
+        implicit_discounting = method_used is PDEMethod.EXPLICIT_HULL
 
         if space_grid is PDESpaceGrid.SPOT:
             gamma, beta, alpha = _spot_operator_coeffs(
@@ -1950,7 +1939,7 @@ def _fd_barrier_ko_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
-                hull_discounting=hull_discounting,
+                implicit_discounting=implicit_discounting,
             )
         else:
             gamma, beta, alpha = _log_operator_coeffs(
@@ -1958,7 +1947,7 @@ def _fd_barrier_ko_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
-                hull_discounting=hull_discounting,
+                implicit_discounting=implicit_discounting,
                 size=spot_steps - 1,
             )
 
@@ -2032,7 +2021,7 @@ def _fd_barrier_ko_core(
                 left,
                 right,
                 intrinsic_for_step,
-                r_dt=r * d_tau if hull_discounting else 0.0,
+                r_dt=r * d_tau if implicit_discounting else 0.0,
             )
         else:
             V, psor_iters = _implicit_cn_step(
@@ -2351,7 +2340,7 @@ def _fd_barrier_ki_core(
         else:
             q = 0.0
 
-        hull_discounting = method_used is PDEMethod.EXPLICIT_HULL
+        implicit_discounting = method_used is PDEMethod.EXPLICIT_HULL
 
         if space_grid is PDESpaceGrid.SPOT:
             gamma, beta, alpha = _spot_operator_coeffs(
@@ -2360,7 +2349,7 @@ def _fd_barrier_ki_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
-                hull_discounting=hull_discounting,
+                implicit_discounting=implicit_discounting,
             )
         else:
             gamma, beta, alpha = _log_operator_coeffs(
@@ -2368,7 +2357,7 @@ def _fd_barrier_ki_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
-                hull_discounting=hull_discounting,
+                implicit_discounting=implicit_discounting,
                 size=spot_steps - 1,
             )
 
@@ -2409,7 +2398,7 @@ def _fd_barrier_ki_core(
                 left,
                 right,
                 intrinsic,
-                r_dt=r * d_tau if hull_discounting else 0.0,
+                r_dt=r * d_tau if implicit_discounting else 0.0,
             )
         else:
             V_act, psor_iters = _implicit_cn_step(
@@ -2460,7 +2449,7 @@ def _fd_barrier_ki_core(
                     left_inact,
                     right_inact,
                     method_used,
-                    r_dt=r * d_tau if hull_discounting else 0.0,
+                    r_dt=r * d_tau if implicit_discounting else 0.0,
                 )
 
             # The sub-grid solve fills only the continuation-region interior.
@@ -2503,7 +2492,7 @@ def _fd_barrier_ki_core(
                     left_inact,
                     right_inact,
                     None,
-                    r_dt=r * d_tau if hull_discounting else 0.0,
+                    r_dt=r * d_tau if implicit_discounting else 0.0,
                 )
             else:
                 V_inact, _ = _implicit_cn_step(

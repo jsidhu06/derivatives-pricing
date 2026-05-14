@@ -21,10 +21,11 @@ class TestDiscountCurveConstruction:
         assert np.isclose(float(curve.df(0.0)), 1.0)
         assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
 
-    def test_flat_curve_multiple_steps(self):
-        curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=10)
-        assert curve.times.size == 11
+    def test_flat_curve_default_end_time(self):
+        # No end_time → default to 100y so users don't need to specify.
+        curve = DiscountCurve.flat(rate=0.05)
         assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
+        assert np.isclose(float(curve.df(50.0)), np.exp(-0.05 * 50.0))
 
     def test_flat_curve_zero_rate(self):
         curve = DiscountCurve.flat(rate=0.0, end_time=1.0)
@@ -37,10 +38,6 @@ class TestDiscountCurveConstruction:
     def test_flat_curve_zero_end_time_raises(self):
         with pytest.raises(ValidationError, match="end_time must be positive"):
             DiscountCurve.flat(rate=0.05, end_time=0.0)
-
-    def test_flat_curve_zero_steps_raises(self):
-        with pytest.raises(ValidationError, match="steps must be >= 1"):
-            DiscountCurve.flat(rate=0.05, end_time=1.0, steps=0)
 
     def test_non_increasing_times_raises(self):
         with pytest.raises(ValidationError, match="strictly increasing"):
@@ -168,7 +165,7 @@ class TestDiscountCurveForwardRate:
     """Test forward_rate() and step_forward_rates()."""
 
     def test_flat_curve_forward_rate_equals_flat_rate(self):
-        curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=4)
+        curve = DiscountCurve.flat(rate=0.05, end_time=2.0)
         fwd = curve.forward_rate(0.25, 0.75)
         assert np.isclose(fwd, 0.05, rtol=1e-10)
 
@@ -192,7 +189,7 @@ class TestDiscountCurveForwardRate:
         assert np.isclose(reconstructed, df_t1, rtol=1e-10)
 
     def test_step_forward_rates_flat(self):
-        curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=4)
+        curve = DiscountCurve.flat(rate=0.05, end_time=2.0)
         grid = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
         fwds = curve.step_forward_rates(grid)
         assert fwds.shape == (4,)

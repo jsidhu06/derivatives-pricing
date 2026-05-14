@@ -1,4 +1,18 @@
-"""Monte Carlo Simulation option valuation implementations."""
+"""Monte Carlo option valuation implementations.
+
+Covers European and American pricing for:
+
+- vanilla call/put (path-terminal payoffs)
+- custom payoffs (``PayoffSpec``)
+- Asian options (path-averaging)
+- barrier options (continuous monitoring with Brownian-bridge continuity
+  correction; discrete monitoring with explicit observation-date checks;
+  KO and KI, with AT_HIT and AT_EXPIRY rebates)
+
+American exercise uses Longstaff-Schwartz regression with optional
+barrier-aware basis enrichment.  Plugged into the registry dispatcher
+in ``core.py``.
+"""
 
 from __future__ import annotations
 from typing import TYPE_CHECKING

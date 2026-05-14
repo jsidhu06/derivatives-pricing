@@ -4,7 +4,7 @@ import warnings
 
 import pytest
 
-from derivatives_pricing.enums import BarrierMonitoring, PDEMethod, PDESpaceGrid
+from derivatives_pricing.enums import BarrierMonitoring, PDEEarlyExercise, PDEMethod, PDESpaceGrid
 from derivatives_pricing.exceptions import ValidationError
 from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
@@ -200,13 +200,18 @@ class TestPDEParams:
         assert p.method is PDEMethod.CRANK_NICOLSON
         assert p.control_variate_european is False
 
-    def test_for_barriers_discrete_defaults_to_implicit(self):
+    def test_for_barriers_discrete_defaults_to_explicit_hull(self):
         p = PDEParams.for_barriers(monitoring=BarrierMonitoring.DISCRETE)
-        assert p.spot_steps == 1600
-        assert p.time_steps == 1200
+        assert p.spot_steps == 1200
+        assert p.time_steps == 3000
         assert p.space_grid is PDESpaceGrid.LOG_SPOT
-        # Discrete monitoring → IMPLICIT (L-stable)
-        assert p.method is PDEMethod.IMPLICIT
+        # Discrete monitoring → EXPLICIT_HULL + INTRINSIC.  Per-step
+        # matvec cost lets us crank time_steps cheaply; Hull's adaptive
+        # dz keeps CFL automatic.  ~5x faster and tighter than the
+        # legacy IMPLICIT 1600x1200 default on hard reverse-American
+        # cases.
+        assert p.method is PDEMethod.EXPLICIT_HULL
+        assert p.american_solver is PDEEarlyExercise.INTRINSIC
 
     def test_for_barriers_with_overrides(self):
         p = PDEParams.for_barriers(
