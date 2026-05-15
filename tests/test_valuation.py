@@ -12,6 +12,7 @@ from derivatives_pricing.valuation import (
     VanillaSpec,
     PayoffSpec,
     AsianSpec,
+    OptionSpec,
     UnderlyingData,
     OptionValuation,
     BinomialParams,
@@ -420,6 +421,44 @@ class TestOptionValuation:
                 spec=self.call_spec,
                 pricing_method="BSM",  # Invalid: string instead of enum
             )
+
+    @pytest.mark.parametrize(
+        "bogus_spec",
+        [
+            None,
+            {"option_type": "CALL"},
+            "VanillaSpec",
+            42,
+            object(),
+        ],
+        ids=["none", "dict", "str", "int", "bare-object"],
+    )
+    def test_option_valuation_rejects_non_spec(self, bogus_spec):
+        """OptionValuation must fail fast with ConfigurationError when ``spec``
+        is not one of the four contract spec classes"""
+        ud = UnderlyingData(
+            initial_value=100.0,
+            volatility=0.2,
+            market_data=self.market_data,
+        )
+
+        with pytest.raises(
+            ConfigurationError,
+            match=r"spec must be a VanillaSpec, PayoffSpec, AsianSpec, or BarrierSpec",
+        ):
+            OptionValuation(
+                underlying=ud,
+                spec=bogus_spec,
+                pricing_method=PricingMethod.BSM,
+            )
+
+    def test_optionspec_alias_isinstance(self):
+        """``OptionSpec`` is a runtime union usable with ``isinstance``."""
+        assert isinstance(self.call_spec, OptionSpec)
+        # Negative cases — none of these match the union.
+        assert not isinstance({}, OptionSpec)
+        assert not isinstance(None, OptionSpec)
+        assert not isinstance("VanillaSpec", OptionSpec)
 
     def test_option_valuation_mc_requires_path_simulation(self):
         """Test that Monte Carlo pricing requires PathSimulation, not UnderlyingData."""

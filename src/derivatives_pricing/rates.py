@@ -114,12 +114,7 @@ class DiscountCurve:
         return cls(times=times, dfs=dfs)
 
     @classmethod
-    def flat(
-        cls,
-        rate: float,
-        end_time: float,
-        steps: int = 1,
-    ) -> DiscountCurve:
+    def flat(cls, rate: float, end_time: float = 100.0) -> DiscountCurve:
         """Build a flat continuously-compounded discount curve.
 
         Parameters
@@ -127,9 +122,9 @@ class DiscountCurve:
         rate
             Flat continuously-compounded annual rate.
         end_time
-            Final maturity in years.
-        steps
-            Number of intervals used to discretize ``[0, end_time]``.
+            Final maturity in years.  Defaults to 100, large enough to
+            cover any realistic option maturity.  Override only if you
+            have a specific reason to truncate the curve domain.
 
         Returns
         -------
@@ -138,9 +133,7 @@ class DiscountCurve:
         """
         if end_time <= 0.0:
             raise ValidationError("end_time must be positive")
-        if steps < 1:
-            raise ValidationError("steps must be >= 1")
-        times = np.linspace(0.0, float(end_time), int(steps) + 1)
+        times = np.array([0.0, float(end_time)])
         dfs = np.exp(-float(rate) * times)
         return cls(times=times, dfs=dfs)
 
