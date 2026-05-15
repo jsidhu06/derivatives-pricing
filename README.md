@@ -64,14 +64,6 @@ Install from PyPI:
 pip install derivatives-pricing
 # or pip install derivatives-pricing[numba] for optional PDE_FD solver acceleration
 ```
-
-### Beta feature — barrier options
-Barrier option pricing is currently
-available as a pre-release. To install:
-```bash
-pip install --pre -U derivatives-pricing
-```
-
 For development:
 
 ```bash
