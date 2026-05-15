@@ -545,8 +545,7 @@ class OptionValuation:
 
         if epsilon is None:
             epsilon = self._underlying.initial_value / 100
-        if isinstance(self._spec, BarrierSpec):
-            epsilon = self._resolve_spot_bump(epsilon)
+        epsilon = self._resolve_barrier_spot_bump(epsilon)
 
         s0 = self._underlying.initial_value
         up = self._bump_underlying(initial_value=s0 + epsilon)
@@ -613,8 +612,7 @@ class OptionValuation:
 
         if epsilon is None:
             epsilon = self._underlying.initial_value / 100
-        if isinstance(self._spec, BarrierSpec):
-            epsilon = self._resolve_spot_bump(epsilon)
+        epsilon = self._resolve_barrier_spot_bump(epsilon)
 
         s0 = self._underlying.initial_value
         up = self._bump_underlying(initial_value=s0 + epsilon)
@@ -1658,21 +1656,23 @@ class OptionValuation:
             f"to bump-and-revalue."
         )
 
-    def _resolve_spot_bump(self, epsilon: float) -> float:
+    def _resolve_barrier_spot_bump(self, epsilon: float) -> float:
         """Cap ``epsilon`` so a central spot bump cannot cross the barrier.
 
-        Caller must have verified ``self._spec`` is a :class:`BarrierSpec`.
-        For barrier options, an unconstrained bump of ``s0 ± epsilon`` may
-        cross the barrier on one side, putting the bumped option in a
-        different (knocked-out vs alive) regime than the unbumped option.
-        The resulting numerical greek then averages two regimes and is
-        biased — sometimes by an order of magnitude.
+        Safe to call unconditionally from any greek method: returns
+        ``epsilon`` unchanged for non-barrier specs.  For barrier specs,
+        an unconstrained bump of ``s0 ± epsilon`` may cross the barrier
+        on one side, putting the bumped option in a different (knocked-
+        out vs alive) regime than the unbumped option.  The resulting
+        numerical greek then averages two regimes and is biased —
+        sometimes by an order of magnitude.
 
         The returned bump is ``min(epsilon, max_fraction * |spot - barrier|)``
         where ``max_fraction = _BARRIER_BUMP_MAX_FRACTION``.
         """
         spec = self._spec
-        assert isinstance(spec, BarrierSpec)
+        if not isinstance(spec, BarrierSpec):
+            return epsilon
         s0 = float(self._underlying.initial_value)
         barrier = float(spec.barrier)
         if spec.direction is BarrierDirection.DOWN:
