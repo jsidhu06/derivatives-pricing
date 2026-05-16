@@ -60,6 +60,7 @@ from .valuation import (
     PDEParams,
 )
 from .valuation.implied_volatility import ImpliedVolResult, implied_volatility
+from .utils import calculate_year_fraction
 
 __all__ = [
     # Market data
@@ -105,6 +106,8 @@ __all__ = [
     "PDEParams",
     "ImpliedVolResult",
     "implied_volatility",
+    # Utilities
+    "calculate_year_fraction",
     # Exceptions
     "DerivativesPricingError",
     "ValidationError",
