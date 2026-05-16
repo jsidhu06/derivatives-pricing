@@ -9,6 +9,9 @@ import pytest
 from derivatives_pricing.exceptions import UnsupportedFeatureError, ValidationError
 from derivatives_pricing.enums import (
     AsianAveraging,
+    BarrierAction,
+    BarrierDirection,
+    BarrierMonitoring,
     ExerciseType,
     ImpliedVolMethod,
     OptionType,
@@ -29,7 +32,9 @@ from derivatives_pricing.stochastic_processes import (
 )
 from derivatives_pricing.valuation import (
     AsianSpec,
+    BarrierSpec,
     ImpliedVolResult,
+    PayoffSpec,
     VanillaSpec,
     OptionValuation,
     implied_volatility,
@@ -492,3 +497,64 @@ def test_implied_volatility_asian_binomial(case: _AsianIVCase):
 
     assert result.converged
     assert np.isclose(result.implied_vol, case.true_vol, atol=5.0e-3)
+
+
+def test_implied_volatility_rejects_barrier_spec():
+    """Barrier specs are blocked: P(sigma) is not guaranteed to be monotonic in sigma."""
+    market_data_obj = market_data(pricing_date=PRICING_DATE, discount_curve=_DEFAULT_RATE_CURVE)
+    underlying_data = underlying(
+        initial_value=100.0,
+        volatility=0.2,
+        market_data=market_data_obj,
+    )
+    barrier_spec = BarrierSpec(
+        option_type=OptionType.CALL,
+        exercise_type=ExerciseType.EUROPEAN,
+        strike=100.0,
+        maturity=MATURITY,
+        barrier=85.0,
+        direction=BarrierDirection.DOWN,
+        action=BarrierAction.OUT,
+        monitoring=BarrierMonitoring.CONTINUOUS,
+    )
+    valuation = OptionValuation(
+        underlying=underlying_data,
+        spec=barrier_spec,
+        pricing_method=PricingMethod.BSM,
+    )
+    target_price = valuation.present_value()
+
+    with pytest.raises(
+        UnsupportedFeatureError,
+        match=r"not supported for barrier specs",
+    ):
+        implied_volatility(target_price, valuation)
+
+
+def test_implied_volatility_rejects_payoff_spec():
+    """PayoffSpec is blocked: P(sigma) monotonicity depends on the
+    user-supplied payoff function and isn't guaranteed in general."""
+    market_data_obj = market_data(pricing_date=PRICING_DATE, discount_curve=_DEFAULT_RATE_CURVE)
+    underlying_data = underlying(
+        initial_value=100.0,
+        volatility=0.2,
+        market_data=market_data_obj,
+    )
+    payoff_spec = PayoffSpec(
+        exercise_type=ExerciseType.EUROPEAN,
+        maturity=MATURITY,
+        payoff_fn=lambda S: np.where(S > 100.0, 1.0, 0.0),
+        currency="USD",
+    )
+    valuation = OptionValuation(
+        underlying=underlying_data,
+        spec=payoff_spec,
+        pricing_method=PricingMethod.BINOMIAL,
+    )
+    target_price = valuation.present_value()
+
+    with pytest.raises(
+        UnsupportedFeatureError,
+        match=r"not supported for PayoffSpec",
+    ):
+        implied_volatility(target_price, valuation)

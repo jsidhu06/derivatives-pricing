@@ -23,6 +23,7 @@ from ..exceptions import (
     UnsupportedFeatureError,
     ValidationError,
 )
+from .contracts import BarrierSpec, PayoffSpec
 from .core import OptionValuation, UnderlyingData
 from .params import BinomialParams
 
@@ -318,8 +319,17 @@ def implied_volatility(
 
     if not isinstance(valuation, OptionValuation):
         raise ConfigurationError("valuation must be an OptionValuation instance")
-    if valuation.option_type not in (OptionType.CALL, OptionType.PUT):
-        raise UnsupportedFeatureError("Implied volatility is only supported for vanilla CALL/PUT.")
+    if isinstance(valuation.spec, PayoffSpec):
+        raise UnsupportedFeatureError(
+            "Implied volatility is not supported for PayoffSpec: "
+            "P(sigma) monotonicity depends on the user-supplied payoff "
+            "function and cannot be guaranteed in general."
+        )
+    if isinstance(valuation.spec, BarrierSpec):
+        raise UnsupportedFeatureError(
+            "Implied volatility is not supported for barrier specs: "
+            "P(sigma) is not guaranteed to be monotonic in sigma."
+        )
     if valuation.pricing_method is PricingMethod.BSM:
         if valuation.exercise_type is not ExerciseType.EUROPEAN:
             raise UnsupportedFeatureError("BSM implied volatility supports European options only.")
