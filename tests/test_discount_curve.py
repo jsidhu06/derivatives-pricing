@@ -1,5 +1,7 @@
 """Tests for DiscountCurve construction, interpolation, and derived rates."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -112,12 +114,11 @@ class TestDiscountCurveDf:
         assert np.isclose(float(result[1]), 0.975)
         assert np.isclose(float(result[2]), 0.95)
 
-    def test_extrapolation_flat(self, curve: DiscountCurve):
-        """Extrapolation beyond the curve should use flat log-df."""
-        df_beyond = float(curve.df(3.0))
-        df_end = float(curve.df(2.0))
-        # np.interp uses right=log_df[-1] for extrapolation, so df stays at the last value
-        assert np.isclose(df_beyond, df_end)
+    def test_extrapolation_extends_last_forward_rate(self, curve: DiscountCurve):
+        """Beyond the last knot the last forward rate continues (not a flat DF,
+        which would imply a zero forward rate)."""
+        fwd_last = np.log(0.95 / 0.90) / 1.0
+        assert np.isclose(float(curve.df(3.0)), 0.90 * np.exp(-fwd_last))
 
     def test_scalar_input(self, curve: DiscountCurve):
         """df() called with a scalar should return a scalar-shaped array."""
@@ -134,11 +135,28 @@ class TestDiscountCurveDf:
         assert np.isclose(right, node, rtol=1e-5)
 
     @pytest.mark.parametrize("t_far", [10.0, 20.0, 100.0])
-    def test_far_extrapolation_is_flat(self, curve: DiscountCurve, t_far: float):
-        """Extrapolation should stay flat at the terminal discount factor."""
-        df_far = float(curve.df(t_far))
-        df_end = float(curve.df(2.0))
-        assert np.isclose(df_far, df_end)
+    def test_far_extrapolation_keeps_forward_rate(self, curve: DiscountCurve, t_far: float):
+        """Far extrapolation keeps the last forward rate, so DF keeps decaying."""
+        fwd_last = np.log(0.95 / 0.90) / 1.0
+        with pytest.warns(UserWarning, match="Extrapolating"):
+            df_far = float(curve.df(t_far))
+        assert np.isclose(df_far, 0.90 * np.exp(-fwd_last * (t_far - 2.0)))
+
+    def test_flat_curve_extrapolates_at_its_rate(self):
+        """A flat curve stays flat past its end (regression: DF used to freeze)."""
+        curve = DiscountCurve.flat(0.05, end_time=1.0)
+        with pytest.warns(UserWarning, match="Extrapolating"):
+            assert np.isclose(float(curve.df(2.0)), np.exp(-0.10))
+
+    def test_first_zero_rate_applies_back_to_origin(self):
+        """Regression: with the first knot after 0 the curve starts from an
+        implicit (0, 1) knot instead of freezing DF at the first knot."""
+        curve = DiscountCurve.from_zero_rates(np.array([1.0, 2.0]), np.array([0.05, 0.05]))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # inside [0, T]: no extrapolation warning
+            assert np.isclose(float(curve.df(0.5)), np.exp(-0.025))
+            assert np.isclose(float(curve.df(1e-6)), np.exp(-0.05e-6))
+            assert np.isclose(curve.forward_rate(0.0, 0.25), 0.05)
 
     def test_df_zero_is_one_when_curve_starts_after_zero(self):
         curve = DiscountCurve(
