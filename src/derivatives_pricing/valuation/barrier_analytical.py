@@ -534,6 +534,15 @@ class _AnalyticalBarrierValuation:
 
         # ── Discrete monitoring: Broadie-Glasserman adjustment ──
         if spec.monitoring is BarrierMonitoring.DISCRETE:
+            if spec.is_spot_past_barrier(S):
+                # Not triggered (t=0 is not an observation), but the spot is
+                # on the far side of H: the closed form only covers spots on
+                # the live side, so it would return a silently wrong price.
+                raise UnsupportedFeatureError(
+                    "Analytical discrete barrier pricing requires the spot on the live "
+                    "side of the barrier; the spot is past it but the pricing date is "
+                    "not an observation date. Use BINOMIAL, PDE_FD or MONTE_CARLO."
+                )
             if spec.num_observations is None:
                 raise UnsupportedFeatureError(
                     "Analytical barrier pricing with DISCRETE monitoring requires "
