@@ -151,6 +151,13 @@ class DiscountCurve:
     def df(self, t: float | np.ndarray) -> np.ndarray:
         """Interpolate discount factors with log-linear interpolation.
 
+        Log-DF is piecewise linear in time, i.e. forward rates are piecewise
+        constant between knots. ``DF(0) = 1`` always: when the first knot is
+        after 0, the curve starts from an implicit ``(0, 1)`` knot, so the
+        first zero rate applies flat back to the origin. Past the last knot
+        the last forward rate is extended (with a warning), as is the first
+        forward rate for (invalid) negative times.
+
         Parameters
         ----------
         t
@@ -163,20 +170,31 @@ class DiscountCurve:
         """
         t = np.asarray(t, dtype=float)
         is_origin = np.isclose(t, 0.0, rtol=0.0, atol=1e-12)
-        t_min, t_max = float(self.times[0]), float(self.times[-1])
+        times, log_df = self._log_df_knots()
+        t_min, t_max = float(times[0]), float(times[-1])
         outside = ((t < t_min) & ~is_origin) | (t > t_max)
         if np.any(outside):
             warnings.warn(
                 f"Extrapolating discount curve outside "
-                f"[{t_min:.4f}, {t_max:.4f}] — flat log-DF assumed",
+                f"[{t_min:.4f}, {t_max:.4f}] — flat forward rate assumed",
                 stacklevel=2,
             )
-        log_df = np.log(self.dfs)
-        out = np.interp(t, self.times, log_df, left=log_df[0], right=log_df[-1])
+        out = np.interp(t, times, log_df)
+        fwd_first = (log_df[0] - log_df[1]) / (times[1] - times[0])
+        fwd_last = (log_df[-2] - log_df[-1]) / (times[-1] - times[-2])
+        out = np.where(t < t_min, log_df[0] - fwd_first * (t - t_min), out)
+        out = np.where(t > t_max, log_df[-1] - fwd_last * (t - t_max), out)
         dfs = np.exp(out)
         if np.any(is_origin):
             dfs = np.where(is_origin, 1.0, dfs)
         return dfs
+
+    def _log_df_knots(self) -> tuple[np.ndarray, np.ndarray]:
+        """Interpolation knots ``(times, log DF)``, anchored at ``(0, 0)``."""
+        log_df = np.log(self.dfs)
+        if self.times[0] > 0.0:
+            return np.concatenate([[0.0], self.times]), np.concatenate([[0.0], log_df])
+        return self.times, log_df
 
     def forward_rate(self, t0: float, t1: float) -> float:
         """Continuously-compounded forward rate on the interval ``[t0, t1]``.
