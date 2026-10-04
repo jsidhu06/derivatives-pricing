@@ -76,6 +76,84 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default vanilla domain: spot and strike plus this many standard deviations
+# of ln(S_T) either side (capped by ``smax_mult``).
+_DOMAIN_NUM_STD = 6.0
+# Warn when the domain reaches fewer standard deviations than this from the
+# spot (the far-field boundary conditions are asymptotic).
+_MIN_DOMAIN_NUM_STD = 3.0
+# Warn when the grid has fewer nodes than this per standard deviation of
+# ln(S_T) around the spot.
+_MIN_NODES_PER_STD = 3.0
+
+
+def _fitted_vanilla_domain(
+    *,
+    spot: float,
+    strike: float,
+    time_to_maturity: float,
+    volatility: float,
+    discount_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
+    smax_mult: float,
+    space_grid: PDESpaceGrid,
+) -> tuple[float, float]:
+    """Return ``(smin, smax)`` for a vanilla grid sized to the distribution.
+
+    The domain spans ``min(S, K) * exp(-w)`` to ``max(S, K) * exp(w)`` with
+    ``w = 6 sigma sqrt(T) + |ln(F / S)|``, intersected with the
+    ``smax_mult`` domain (``[0, smax_mult * max(S, K)]`` on the spot grid,
+    ``[min(S, K) / smax_mult, smax_mult * max(S, K)]`` on the log grid).
+    Short-dated or low-vol options thus get a fine grid around spot and
+    strike; when ``smax_mult`` caps the domain within 3 standard deviations
+    of the spot a warning is emitted, since the asymptotic boundary
+    conditions then bias the price.
+    """
+    ref = max(spot, strike)
+    sd = volatility * math.sqrt(time_to_maturity)
+    df_r = float(discount_curve.df(time_to_maturity))
+    df_q = float(dividend_curve.df(time_to_maturity)) if dividend_curve is not None else 1.0
+    drift = abs(math.log(df_q / df_r))
+    width = max(_DOMAIN_NUM_STD * sd + drift, 1.0e-2)
+
+    cap_hi = smax_mult * ref
+    low = min(spot, strike)
+    cap_lo = 0.0 if space_grid is PDESpaceGrid.SPOT else max(low / smax_mult, 1.0e-8)
+    smax = min(cap_hi, ref * math.exp(width))
+    smin = max(cap_lo, low * math.exp(-width))
+
+    reach_hi = math.log(smax / spot)
+    reach_lo = math.log(spot / smin) if smin > 0.0 else math.inf
+    if min(reach_hi, reach_lo) < _MIN_DOMAIN_NUM_STD * sd + drift:
+        warnings.warn(
+            f"PDE domain [{smin:.4g}, {smax:.4g}] reaches fewer than "
+            f"{_MIN_DOMAIN_NUM_STD:g} standard deviations of ln(S_T) from the spot "
+            f"(sigma*sqrt(T) = {sd:.3g}); the price is biased by the far-field boundary. "
+            "Increase smax_mult (the LOG_SPOT grid handles wide domains best).",
+            stacklevel=4,
+        )
+    return smin, smax
+
+
+def _warn_if_under_resolved(
+    *,
+    spot: float,
+    spacing: float,
+    time_to_maturity: float,
+    volatility: float,
+    space_grid: PDESpaceGrid,
+) -> None:
+    """Warn when the grid spacing is coarse relative to sigma * sqrt(T)."""
+    sd = volatility * math.sqrt(time_to_maturity)
+    nodes_per_std = sd / spacing if space_grid is PDESpaceGrid.LOG_SPOT else spot * sd / spacing
+    if nodes_per_std < _MIN_NODES_PER_STD:
+        warnings.warn(
+            f"PDE grid has {nodes_per_std:.2g} nodes per standard deviation of ln(S_T) "
+            f"(sigma*sqrt(T) = {sd:.3g}); the price is unreliable. Increase spot_steps or "
+            "narrow the domain (smax_mult).",
+            stacklevel=4,
+        )
+
 
 def _solve_tridiagonal_thomas(
     lower: np.ndarray,
@@ -389,8 +467,12 @@ def _build_log_grid(
     method: PDEMethod,
     anchor_spot: float | None = None,
     anchor_half_step: bool = False,
+    domain: tuple[float, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Build a log-spot grid.
+
+    ``domain`` overrides the default ``smax_mult`` target span
+    ``[max(S, K) / smax_mult, smax_mult * max(S, K)]``.
 
     ``dz`` selection by scheme:
 
@@ -413,8 +495,11 @@ def _build_log_grid(
     if anchor_half_step and anchor_spot is None:
         raise ValidationError("anchor_half_step requires anchor_spot to be provided")
 
-    smax = float(smax_mult * max(spot, strike))
-    smin = float(max(max(spot, strike) / smax_mult, 1.0e-8))
+    if domain is not None:
+        smin, smax = float(domain[0]), float(domain[1])
+    else:
+        smax = float(smax_mult * max(spot, strike))
+        smin = float(max(max(spot, strike) / smax_mult, 1.0e-8))
     zmin_target = np.log(smin)
     zmax_target = np.log(smax)
 
@@ -964,12 +1049,17 @@ def _fd_core(
     max_iter: int | None = None,
     payoff_fn: Callable | None = None,
     payoff_boundary_model: PayoffBoundaryModel | None = None,
+    fit_domain: bool = False,
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
     """Core finite-difference solver for option valuation.
 
     Supports vanilla CALL/PUT (via *option_type* and *strike*) and
     arbitrary payoffs (via *payoff_fn*).  When *payoff_fn* is provided
     it takes precedence and *option_type*/*strike* may be ``None``.
+
+    With ``fit_domain`` (vanilla only) the domain is sized to
+    ``sigma * sqrt(T)`` around spot and strike (see
+    :func:`_fitted_vanilla_domain`) instead of the full ``smax_mult`` span.
 
     Returns
     -------
@@ -1000,10 +1090,23 @@ def _fd_core(
     # boundaries so all downstream code uses a single consistent meaning.
     ref_price = max(spot, strike) if strike is not None else spot
     smax = float(smax_mult * ref_price)
+    domain: tuple[float, float] | None = None
+    if fit_domain and strike is not None and payoff_fn is None:
+        domain = _fitted_vanilla_domain(
+            spot=spot,
+            strike=strike,
+            time_to_maturity=time_to_maturity,
+            volatility=volatility,
+            discount_curve=discount_curve,
+            dividend_curve=dividend_curve,
+            smax_mult=smax_mult,
+            space_grid=space_grid,
+        )
     if space_grid is PDESpaceGrid.SPOT:
-        grid = np.linspace(0.0, smax, spot_steps + 1)
+        smin_spot, smax = domain if domain is not None else (0.0, smax)
+        grid = np.linspace(smin_spot, smax, spot_steps + 1)
         S = grid
-        dS = smax / spot_steps
+        dS = (smax - smin_spot) / spot_steps
     else:
         grid, S, dz = _build_log_grid(
             spot=spot,
@@ -1014,7 +1117,15 @@ def _fd_core(
             spot_steps=spot_steps,
             time_steps=time_steps,
             method=method,
+            domain=domain,
         )
+    _warn_if_under_resolved(
+        spot=spot,
+        spacing=dS if space_grid is PDESpaceGrid.SPOT else dz,
+        time_to_maturity=time_to_maturity,
+        volatility=volatility,
+        space_grid=space_grid,
+    )
 
     smin = float(S[0])
     smax = float(S[-1])
@@ -1606,6 +1717,7 @@ class _FDValuationBase(_FDGridGreeksMixin):
             max_iter=int(params.max_iter) if self._early_exercise else None,
             payoff_fn=custom_payoff,
             payoff_boundary_model=custom_boundary_model,
+            fit_domain=custom_payoff is None,
         )
 
     def present_value(self) -> float:
@@ -1833,6 +1945,13 @@ def _fd_barrier_ko_core(
                 anchor_half_step=True,
             )
 
+    _warn_if_under_resolved(
+        spot=spot,
+        spacing=dS if space_grid is PDESpaceGrid.SPOT else dz,
+        time_to_maturity=time_to_maturity,
+        volatility=volatility,
+        space_grid=space_grid,
+    )
     smin = float(S[0])
     smax = float(S[-1])
 
@@ -2234,6 +2353,13 @@ def _fd_barrier_ki_core(
             anchor_half_step=not continuous,
         )
 
+    _warn_if_under_resolved(
+        spot=spot,
+        spacing=dS if space_grid is PDESpaceGrid.SPOT else dz,
+        time_to_maturity=time_to_maturity,
+        volatility=volatility,
+        space_grid=space_grid,
+    )
     smin = float(S[0])
     smax = float(S[-1])
 

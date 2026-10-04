@@ -290,6 +290,35 @@ class TestNearZeroExpiry:
         assert np.isclose(pv, expected_intrinsic, atol=0.50)
 
 
+class TestPDEDomainFitsDistribution:
+    """Regression: the default PDE domain ignored sigma*sqrt(T).
+
+    A fixed ``[0, 4 * max(S, K)]`` grid with 200 nodes has dS = 2, wider than
+    a one-day standard deviation (~1), so a 1-day ATM call came out 42% low
+    (0.248 vs 0.424) with no warning. The vanilla domain is now sized to
+    spot/strike plus 6 sigma*sqrt(T), and a domain capped by ``smax_mult``
+    within 3 standard deviations of the spot warns.
+    """
+
+    @pytest.mark.parametrize("hours", [1, 24, 24 * 7])
+    @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_short_dated_matches_bsm(self, hours, space_grid, option_type):
+        maturity = PRICING_DATE + dt.timedelta(hours=hours)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, maturity, RATE))
+        spec = _spec(strike=100.0, option_type=option_type, maturity=maturity)
+        pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
+        bsm = _pv(ud, spec, PricingMethod.BSM)
+        assert np.isclose(pde, bsm, rtol=2e-3)
+
+    def test_capped_domain_warns(self):
+        maturity = dt.datetime(2030, 1, 1)
+        ud = _underlying(vol=0.8, discount_curve=flat_curve(PRICING_DATE, maturity, RATE))
+        spec = _spec(strike=100.0, maturity=maturity)
+        with pytest.warns(UserWarning, match="standard deviations of ln"):
+            _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(spot_steps=400, time_steps=400))
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  Deep ITM / OTM
 # ═══════════════════════════════════════════════════════════════════════
