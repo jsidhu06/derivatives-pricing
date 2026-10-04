@@ -916,6 +916,23 @@ class TestBarrierDiscreteMonitoring:
         )
         assert discrete_pv > continuous_pv
 
+    def test_analytical_rejects_spot_past_untriggered_discrete_barrier(self):
+        """Regression: spot past a discrete barrier on a non-observation date.
+
+        The option is live, but the closed form is only valid with the spot on
+        the live side; it used to return 1.29 against ~5.3 from PDE/tree.
+        """
+        spec = _barrier_spec(
+            direction=BarrierDirection.DOWN,
+            action=BarrierAction.OUT,
+            barrier=105.0,
+            monitoring=BarrierMonitoring.DISCRETE,
+            num_observations=4,
+        )
+        with pytest.raises(UnsupportedFeatureError, match="requires the spot on the live side"):
+            OptionValuation(_underlying(), spec, PricingMethod.BSM).present_value()
+        assert OptionValuation(_underlying(), spec, PricingMethod.PDE_FD).present_value() > 0.0
+
     def test_discrete_monitoring_dates_raises_for_analytical(self):
         """Analytical engine rejects monitoring_dates (only num_observations)."""
         dates = [PRICING_DATE + dt.timedelta(days=i * 30) for i in range(1, 10)]
@@ -3544,6 +3561,55 @@ class TestBarrierMCInceptionHit:
             gbm, vanilla_spec, PricingMethod.MONTE_CARLO, params=_MC_SEED
         ).present_value()
         assert np.isclose(pv_ki, pv_vanilla, rtol=0.01)
+
+
+class TestDiscreteKnockOutRebateAtMaturityHit:
+    """Regression: a knock-out first hit at a maturity observation pays its rebate.
+
+    The PDE used to zero the knocked-out nodes at a maturity observation,
+    and American LSM dropped the at-hit rebate for paths first hit on the
+    final step: the PDE sat ~3% below the tree and MC, and American MC below
+    European. The tree and European MC were already right.
+    """
+
+    @pytest.mark.parametrize(
+        "option_type,direction,barrier",
+        [
+            (OptionType.CALL, BarrierDirection.DOWN, 90.0),
+            (OptionType.PUT, BarrierDirection.UP, 115.0),
+        ],
+    )
+    @pytest.mark.parametrize("num_observations", [4, 12])
+    @pytest.mark.parametrize("exercise_type", [ExerciseType.EUROPEAN, ExerciseType.AMERICAN])
+    def test_engines_agree(self, option_type, direction, barrier, num_observations, exercise_type):
+        md = _market_data()
+        ud = UnderlyingData(initial_value=SPOT, volatility=0.30, market_data=md)
+        gbm = GBMProcess(
+            md,
+            GBMParams(initial_value=SPOT, volatility=0.30),
+            SimulationConfig(paths=50_000, num_steps=52, end_date=MATURITY),
+        )
+        spec = _barrier_spec(
+            option_type=option_type,
+            exercise_type=exercise_type,
+            direction=direction,
+            action=BarrierAction.OUT,
+            barrier=barrier,
+            monitoring=BarrierMonitoring.DISCRETE,
+            num_observations=num_observations,
+            rebate=10.0,
+            rebate_timing=RebateTiming.AT_HIT,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tree = OptionValuation(ud, spec, PricingMethod.BINOMIAL).present_value()
+            pde = OptionValuation(ud, spec, PricingMethod.PDE_FD).present_value()
+            mc = OptionValuation(
+                gbm, spec, PricingMethod.MONTE_CARLO, params=MonteCarloParams(random_seed=42)
+            ).present_value()
+
+        assert np.isclose(pde, tree, rtol=1e-3)  # measured <= 5e-4; the bug was ~3%
+        assert np.isclose(mc, tree, rtol=1.5e-2)  # MC noise; the bug was ~3%
 
 
 @pytest.mark.parametrize("exercise_type", _EXERCISE_TYPES)

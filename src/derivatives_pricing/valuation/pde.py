@@ -1853,16 +1853,17 @@ def _fd_barrier_ko_core(
 
     # For continuous KO: payoff is zero on the barrier side (enforced
     # by grid truncation since the barrier is at the boundary).
-    # For discrete KO: zero out the payoff on the knocked-out side at maturity
-    # only if maturity is a monitoring date (which it typically is).
+    # For discrete KO: if maturity is a monitoring date (which it typically
+    # is), nodes on the knocked-out side are knocked out *at* maturity and
+    # receive the rebate (AT_HIT and AT_EXPIRY coincide at T), not zero.
     if not continuous:
         assert monitoring_taus is not None  # validated above
         # tau=0 is maturity; if it's a monitoring tau, apply the reset
         if any(abs(tau) < 1e-12 for tau in monitoring_taus):
             if direction is BarrierDirection.DOWN:
-                payoff[S <= barrier] = 0.0
+                payoff[S <= barrier] = rebate
             else:
-                payoff[S >= barrier] = 0.0
+                payoff[S >= barrier] = rebate
 
     V = payoff.copy()
 

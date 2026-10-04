@@ -1657,6 +1657,7 @@ class _MCBarrierAmericanValuation(_MCBarrierBase):
         self,
         intrinsic: np.ndarray,
         ever_hit: np.ndarray,
+        first_hit_step: np.ndarray,
     ) -> np.ndarray:
         """Initialise terminal path values before backward induction."""
         values = np.zeros_like(intrinsic)
@@ -1667,6 +1668,12 @@ class _MCBarrierAmericanValuation(_MCBarrierBase):
             alive_T = ~ever_hit[-1]
             if rebate > 0.0 and rebate_timing is RebateTiming.AT_EXPIRY:
                 values[-1] = np.where(alive_T, intrinsic[-1], rebate)
+            elif rebate > 0.0:
+                # AT_HIT: earlier hits receive the rebate at their hit step
+                # during backward induction; a first hit on the final step
+                # is paid here, at maturity.
+                hit_at_T = first_hit_step == intrinsic.shape[0] - 1
+                values[-1] = np.where(alive_T, intrinsic[-1], np.where(hit_at_T, rebate, 0.0))
             else:
                 values[-1] = intrinsic[-1] * alive_T.astype(float)
             return values
@@ -1904,7 +1911,7 @@ class _MCBarrierAmericanValuation(_MCBarrierBase):
                 value_0 = rebate * float(discount_factors[-1])
             return np.full(n_paths, value_0, dtype=float)
 
-        values = self._initial_barrier_values(intrinsic, ever_hit)
+        values = self._initial_barrier_values(intrinsic, ever_hit, first_hit_step)
 
         # Backward induction
         for t in range(n_times - 2, 0, -1):
