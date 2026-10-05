@@ -1950,7 +1950,7 @@ def _fd_barrier_ko_core(
     omega: float | None = None,
     tol: float | None = None,
     max_iter: int | None = None,
-    domain: tuple[float, float] | None = None,
+    domain: tuple[float, float],
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
     """Core finite-difference solver for knock-out barrier options.
 
@@ -1988,18 +1988,18 @@ def _fd_barrier_ko_core(
     # ── Grid construction ─────────────────────────────────────────────
     # For continuous KO, truncate the grid at the barrier.
     # For discrete KO, use the standard full grid.
-    # ``domain`` (see _barrier_domain) supplies the far-field targets; when
-    # absent they are the legacy smax_mult span.
+    # Far-field targets from _barrier_domain. Its spot-grid lower edge is 0
+    # (the legacy floor of the discrete/KI full grids); a continuously
+    # monitored up-barrier spot grid keeps its legacy floor max(S, K) / m.
     ref_price = max(spot, strike)
-    far_lo = domain[0] if domain is not None and domain[0] > 0.0 else None
-    far_hi = domain[1] if domain is not None else smax_mult * ref_price
+    far_lo, far_hi = domain
 
     if continuous:
         if direction is BarrierDirection.DOWN:
             smin_target = barrier
             smax_target = far_hi
         else:
-            smin_target = far_lo if far_lo is not None else max(ref_price / smax_mult, 1.0e-8)
+            smin_target = far_lo if far_lo > 0.0 else max(ref_price / smax_mult, 1.0e-8)
             smax_target = barrier
     else:
         smin_target = None
@@ -2404,7 +2404,7 @@ def _fd_barrier_ki_core(
     omega: float | None = None,
     tol: float | None = None,
     max_iter: int | None = None,
-    domain: tuple[float, float] | None = None,
+    domain: tuple[float, float],
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
     """Two-surface coupled PDE solver for knock-in barrier options.
 
@@ -2447,8 +2447,6 @@ def _fd_barrier_ki_core(
         raise ConfigurationError("monitoring_taus is required for discrete barrier monitoring.")
 
     # ── Grid construction (full grid, not truncated) ──────────────────
-    ref_price = max(spot, strike)
-
     if space_grid is PDESpaceGrid.LOG_SPOT:
         grid, S, dz = _build_log_grid(
             spot=spot,
@@ -2464,7 +2462,7 @@ def _fd_barrier_ki_core(
             domain=domain,
         )
     else:
-        smax = float(domain[1] if domain is not None else smax_mult * ref_price)
+        smax = float(domain[1])
         grid, S, dS = _build_spot_grid(
             smin=0.0,
             smax=smax,
