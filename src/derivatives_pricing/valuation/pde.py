@@ -157,13 +157,14 @@ def _barrier_domain(
 ) -> tuple[float, float]:
     """Return the far-field ``(smin, smax)`` targets for barrier grids.
 
-    The legacy domain (``[0, m * max(S, K)]`` on the spot grid,
-    ``[max(S, K) / m, m * max(S, K)]`` on the log grid, ``m = smax_mult``
-    or 4). With ``smax_mult=None`` on the LOG_SPOT grid, a side reaching
-    fewer than 3 standard deviations from the spot/forward is widened to 6
-    standard deviations beyond them (high vol or long maturities); the
-    domain is never narrowed, so it always contains the strike. A barrier on a
-    continuously monitored side replaces that side in the caller.
+    The legacy domain (``[0, smax_mult * max(S, K)]`` on the spot grid,
+    ``[max(S, K) / smax_mult, smax_mult * max(S, K)]`` on the log grid, with
+    ``smax_mult`` defaulting to 4). With ``smax_mult=None`` on the LOG_SPOT
+    grid, a side reaching fewer than 3 standard deviations from the
+    spot/forward is widened to 6 standard deviations beyond them (high vol
+    or long maturities); the domain is never narrowed, so it always contains
+    the strike. A barrier on a continuously monitored side replaces that
+    side in the caller.
     """
     mult = _DEFAULT_SMAX_MULT if smax_mult is None else smax_mult
     ref = max(spot, strike)
@@ -1990,7 +1991,7 @@ def _fd_barrier_ko_core(
     # For discrete KO, use the standard full grid.
     # Far-field targets from _barrier_domain. Its spot-grid lower edge is 0
     # (the legacy floor of the discrete/KI full grids); a continuously
-    # monitored up-barrier spot grid keeps its legacy floor max(S, K) / m.
+    # monitored up-barrier spot grid keeps its legacy floor max(S, K) / smax_mult.
     ref_price = max(spot, strike)
     far_lo, far_hi = domain
 
