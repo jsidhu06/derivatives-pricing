@@ -5,6 +5,7 @@ at the boundaries of its input space.
 """
 
 import datetime as dt
+import warnings
 
 import numpy as np
 import pytest
@@ -290,33 +291,210 @@ class TestNearZeroExpiry:
         assert np.isclose(pv, expected_intrinsic, atol=0.50)
 
 
-class TestPDEDomainFitsDistribution:
-    """Regression: the default PDE domain ignored sigma*sqrt(T).
+def _bsm_market(spot=100.0, vol=0.20, rate=RATE, div_yield=0.0, maturity=MATURITY):
+    md = market_data(
+        pricing_date=PRICING_DATE,
+        discount_curve=flat_curve(PRICING_DATE, maturity, rate),
+        currency="USD",
+    )
+    q_curve = flat_curve(PRICING_DATE, maturity, div_yield) if div_yield else None
+    return UnderlyingData(
+        initial_value=spot, volatility=vol, market_data=md, dividend_curve=q_curve
+    )
 
-    A fixed ``[0, 4 * max(S, K)]`` grid with 200 nodes has dS = 2, wider than
-    a one-day standard deviation (~1), so a 1-day ATM call came out 42% low
-    (0.248 vs 0.424) with no warning. The vanilla domain is now sized to
-    spot/strike plus 6 sigma*sqrt(T), and a domain capped by ``smax_mult``
-    within 3 standard deviations of the spot warns.
+
+def _pde_warnings(caught) -> list[str]:
+    return [str(w.message) for w in caught if "PDE" in str(w.message)]
+
+
+class TestPDEDomainFitsDistribution:
+    """Regression and validation for the auto PDE domain (``smax_mult=None``).
+
+    The default vanilla grid used to span ``[0, 4 * max(S, K)]`` regardless
+    of the horizon: with 200 nodes dS = 2 exceeds a one-day standard
+    deviation (~1), so a 1-day ATM call priced 42% low (0.248 vs 0.424), and
+    high vol / long maturities were truncated (sigma 0.8, 5y: -4% spot,
+    -9% log grid), all without a warning. The auto domain spans the spot and
+    forward with 6 sigma*sqrt(T) of margin (uncapped on the log grid, capped
+    at 4 * max(S, K) on the spot grid), with forward-intrinsic boundary
+    conditions; an explicit ``smax_mult`` keeps the legacy domain exactly.
     """
+
+    # Measured worst cases (200 x 200): abs error <= 1.4e-3 (30d, 0.31 put);
+    # relative errors up to ~1.2% only on ~1-cent or deep-OTM values, where the
+    # off-node strike dominates. The bug these guard against was 4%-86%.
+    _RTOL, _ATOL = 1.5e-2, 2e-4
 
     @pytest.mark.parametrize("hours", [1, 24, 24 * 7])
     @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
     @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
-    def test_short_dated_matches_bsm(self, hours, space_grid, option_type):
+    def test_short_dated_atm_matches_bsm(self, hours, space_grid, option_type):
         maturity = PRICING_DATE + dt.timedelta(hours=hours)
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, maturity, RATE))
+        ud = _bsm_market(maturity=maturity)
         spec = _spec(strike=100.0, option_type=option_type, maturity=maturity)
         pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
         bsm = _pv(ud, spec, PricingMethod.BSM)
-        assert np.isclose(pde, bsm, rtol=2e-3)
+        assert np.isclose(pde, bsm, rtol=2e-3)  # measured <= 4.4e-4
 
-    def test_capped_domain_warns(self):
+    def _sweep_case(self, days, vol, moneyness, rates, space_grid, option_type):
+        maturity = PRICING_DATE + dt.timedelta(days=days)
+        rate, div_yield = rates
+        ud = _bsm_market(vol=vol, rate=rate, div_yield=div_yield, maturity=maturity)
+        spec = _spec(strike=100.0 * moneyness, option_type=option_type, maturity=maturity)
+        with warnings.catch_warnings():
+            # The spot grid's 4x cap warns at high vol / long T (by design).
+            warnings.simplefilter("ignore")
+            pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
+        bsm = _pv(ud, spec, PricingMethod.BSM)
+        assert np.isclose(pde, bsm, rtol=self._RTOL, atol=self._ATOL)
+
+    @pytest.mark.parametrize("vol", [0.10, 0.20, 0.50])
+    @pytest.mark.parametrize("moneyness", [0.8, 0.9, 1.0, 1.1, 1.2])
+    @pytest.mark.parametrize("rates", [(0.05, 0.0), (0.01, 0.04)], ids=["r>q", "q>r"])
+    @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_one_day_sweep_matches_bsm(self, vol, moneyness, rates, space_grid, option_type):
+        self._sweep_case(1, vol, moneyness, rates, space_grid, option_type)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("days", [7, 30, 365])
+    @pytest.mark.parametrize("vol", [0.10, 0.20, 0.50])
+    @pytest.mark.parametrize("moneyness", [0.8, 0.9, 1.0, 1.1, 1.2])
+    @pytest.mark.parametrize("rates", [(0.05, 0.0), (0.01, 0.04)], ids=["r>q", "q>r"])
+    @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_sweep_matches_bsm(self, days, vol, moneyness, rates, space_grid, option_type):
+        self._sweep_case(days, vol, moneyness, rates, space_grid, option_type)
+
+    @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+    def test_grid_refinement_converges(self, space_grid):
+        """Refinement shrinks the error (not monotonically: the strike sits
+        between nodes). Measured: ~5e-4 at 100 nodes, < 5e-5 at 400."""
+        maturity = PRICING_DATE + dt.timedelta(days=1)
+        ud = _bsm_market(maturity=maturity)
+        spec = _spec(strike=100.0, maturity=maturity)
+        bsm = _pv(ud, spec, PricingMethod.BSM)
+
+        def err(n):
+            params = PDEParams(space_grid=space_grid, spot_steps=n, time_steps=n)
+            return abs(_pv(ud, spec, PricingMethod.PDE_FD, params=params) - bsm)
+
+        assert err(400) < err(100)
+        assert err(400) < 1e-4
+
+    @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+    def test_one_day_atm_greeks_match_bsm(self, space_grid):
+        """Gamma is the sharp test of resolution near the strike."""
+        maturity = PRICING_DATE + dt.timedelta(days=1)
+        ud = _bsm_market(maturity=maturity)
+        spec = _spec(strike=100.0, maturity=maturity)
+        pde = OptionValuation(
+            ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid)
+        )
+        bsm = OptionValuation(ud, spec, PricingMethod.BSM)
+        for greek in ("delta", "gamma", "theta"):
+            # measured <= 7e-4
+            assert np.isclose(getattr(pde, greek)(), getattr(bsm, greek)(), rtol=2e-3), greek
+
+    @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+    def test_one_minute_option_is_resolved(self, space_grid):
+        """No minimum domain width: 6 sigma*sqrt(T) ~ 0.2% still gets ~16
+        nodes per standard deviation, with no warning."""
+        maturity = PRICING_DATE + dt.timedelta(minutes=1)
+        ud = _bsm_market(maturity=maturity)
+        spec = _spec(strike=100.0, maturity=maturity)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
+        assert not _pde_warnings(caught)
+        assert np.isclose(pde, _pv(ud, spec, PricingMethod.BSM), rtol=2e-3)
+
+    @pytest.mark.parametrize("days", [1, 7])
+    @pytest.mark.parametrize("exercise", [ExerciseType.EUROPEAN, ExerciseType.AMERICAN])
+    @pytest.mark.parametrize(
+        "option_type,strike",
+        [
+            (OptionType.PUT, 200.0),  # deep ITM: strike far above the domain
+            (OptionType.CALL, 50.0),  # deep ITM: strike far below the domain
+            (OptionType.CALL, 150.0),  # deep OTM
+            (OptionType.PUT, 60.0),  # deep OTM
+        ],
+    )
+    @pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+    def test_strike_outside_domain(self, days, exercise, option_type, strike, space_grid):
+        """The auto domain need not contain the strike; the forward-intrinsic
+        boundary conditions are then exact (measured <= 4e-8)."""
+        maturity = PRICING_DATE + dt.timedelta(days=days)
+        ud = _bsm_market(maturity=maturity)
+        spec = _spec(strike=strike, option_type=option_type, exercise=exercise, maturity=maturity)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
+        assert not _pde_warnings(caught)
+        if exercise is ExerciseType.AMERICAN:
+            ref = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+        else:
+            ref = _pv(ud, spec, PricingMethod.BSM)
+        assert np.isclose(pde, ref, rtol=0.0, atol=1e-6)
+
+    def test_high_vol_long_dated_log_grid_is_accurate(self):
+        """The log grid widens the auto domain past 4x (was -9.1%)."""
         maturity = dt.datetime(2030, 1, 1)
-        ud = _underlying(vol=0.8, discount_curve=flat_curve(PRICING_DATE, maturity, RATE))
+        ud = _bsm_market(vol=0.8, maturity=maturity)
+        spec = _spec(strike=100.0, maturity=maturity)
+        params = PDEParams(spot_steps=400, time_steps=400, space_grid=PDESpaceGrid.LOG_SPOT)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pde = _pv(ud, spec, PricingMethod.PDE_FD, params=params)
+        assert not _pde_warnings(caught)
+        assert np.isclose(pde, _pv(ud, spec, PricingMethod.BSM), rtol=1e-3)  # measured 3.5e-4
+
+    def test_spot_grid_cap_warns(self):
+        """The uniform spot grid keeps the 4x cap (wider would coarsen dS) and
+        warns that the boundary is within 3 standard deviations."""
+        maturity = dt.datetime(2030, 1, 1)
+        ud = _bsm_market(vol=0.8, maturity=maturity)
         spec = _spec(strike=100.0, maturity=maturity)
         with pytest.warns(UserWarning, match="standard deviations of ln"):
             _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(spot_steps=400, time_steps=400))
+
+    def test_explicit_smax_mult_is_the_legacy_domain(self):
+        """An explicit smax_mult sets the legacy domain exactly; truncation
+        warns, and widening it converges to BSM."""
+        maturity = dt.datetime(2030, 1, 1)
+        ud = _bsm_market(vol=0.8, maturity=maturity)
+        spec = _spec(strike=100.0, maturity=maturity)
+        bsm = _pv(ud, spec, PricingMethod.BSM)
+
+        def pde(smax_mult):
+            params = PDEParams(
+                smax_mult=smax_mult,
+                spot_steps=400,
+                time_steps=400,
+                space_grid=PDESpaceGrid.LOG_SPOT,
+            )
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                value = _pv(ud, spec, PricingMethod.PDE_FD, params=params)
+            return value, _pde_warnings(caught)
+
+        legacy, legacy_warnings = pde(4.0)
+        assert np.isclose(legacy, 61.300193, rtol=1e-6)  # the legacy -9.1% value
+        assert legacy_warnings
+        # The lower boundary must also clear 3 standard deviations (sigma*sqrt(T)
+        # = 1.79): ln(1000) / 1.79 ~ 3.9 does, ln(100) / 1.79 ~ 2.6 would warn.
+        wide, wide_warnings = pde(1000.0)
+        assert not wide_warnings
+        assert abs(wide - bsm) < abs(legacy - bsm) / 100
+
+    def test_explicit_smax_mult_short_dated_warns_under_resolution(self):
+        """The legacy domain reproduces the old 1-day bug, now with a warning."""
+        maturity = PRICING_DATE + dt.timedelta(days=1)
+        ud = _bsm_market(maturity=maturity)
+        spec = _spec(strike=100.0, maturity=maturity)
+        with pytest.warns(UserWarning, match="nodes per standard deviation"):
+            legacy = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(smax_mult=4.0))
+        assert np.isclose(legacy, 0.247901, rtol=1e-5)
 
 
 # ═══════════════════════════════════════════════════════════════════════

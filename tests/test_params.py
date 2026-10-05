@@ -128,12 +128,17 @@ class TestBinomialParams:
 class TestPDEParams:
     def test_defaults_valid(self):
         p = PDEParams()
-        assert p.smax_mult == 4.0
+        assert p.smax_mult is None  # auto domain from sigma*sqrt(T)
         assert p.method is PDEMethod.CRANK_NICOLSON
 
-    def test_rejects_non_positive_smax_mult(self):
-        with pytest.raises(ValidationError, match="smax_mult must be positive"):
-            PDEParams(smax_mult=0.0)
+    @pytest.mark.parametrize("smax_mult", [0.0, -1.0, 0.5, 1.0])
+    def test_rejects_smax_mult_not_above_one(self, smax_mult):
+        # <= 1 would give a domain that need not contain the spot.
+        with pytest.raises(ValidationError, match="smax_mult must be > 1"):
+            PDEParams(smax_mult=smax_mult)
+
+    def test_accepts_explicit_smax_mult(self):
+        assert PDEParams(smax_mult=6.0).smax_mult == 6.0
 
     def test_rejects_spot_steps_below_3(self):
         with pytest.raises(ValidationError, match="spot_steps must be >= 3"):
