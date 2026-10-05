@@ -3563,6 +3563,59 @@ class TestBarrierMCInceptionHit:
         assert np.isclose(pv_ki, pv_vanilla, rtol=0.01)
 
 
+class TestBarrierPDEAutoDomainHighVol:
+    """Regression: the barrier far side was truncated at 4 * max(S, K).
+
+    At sigma 0.8, T 5y the default barrier PDE silently missed the closed form
+    by -1.6% (down-and-out call) to -16% (up-and-in put; knock-ins also
+    inherited it through their vanilla parity leg). With ``smax_mult=None``
+    the log grid widens a far side reaching fewer than 3 standard deviations;
+    an explicit ``smax_mult`` keeps the legacy domain and warns.
+    """
+
+    _CASES = [
+        pytest.param(BarrierDirection.DOWN, 80.0, OptionType.CALL, BarrierAction.OUT, id="DOC"),
+        pytest.param(BarrierDirection.UP, 120.0, OptionType.PUT, BarrierAction.OUT, id="UOP"),
+        pytest.param(BarrierDirection.DOWN, 80.0, OptionType.CALL, BarrierAction.IN, id="DIC"),
+        pytest.param(BarrierDirection.UP, 120.0, OptionType.PUT, BarrierAction.IN, id="UIP"),
+    ]
+
+    @staticmethod
+    def _case(direction, barrier, option_type, action):
+        maturity = dt.datetime(2030, 1, 1)
+        md = MarketData(PRICING_DATE, flat_curve(PRICING_DATE, maturity, RATE), currency=CURRENCY)
+        ud = UnderlyingData(initial_value=SPOT, volatility=0.8, market_data=md)
+        spec = _barrier_spec(
+            option_type=option_type,
+            maturity=maturity,
+            barrier=barrier,
+            direction=direction,
+            action=action,
+        )
+        return ud, spec
+
+    @pytest.mark.parametrize("direction,barrier,option_type,action", _CASES)
+    def test_auto_domain_matches_closed_form(self, direction, barrier, option_type, action):
+        ud, spec = self._case(direction, barrier, option_type, action)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pde = OptionValuation(ud, spec, PricingMethod.PDE_FD).present_value()
+        assert not [w for w in caught if "PDE" in str(w.message)]
+        closed_form = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+        assert np.isclose(pde, closed_form, rtol=5e-4)  # measured <= 6.3e-5
+
+    @pytest.mark.parametrize("direction,barrier,option_type,action", _CASES)
+    def test_explicit_smax_mult_keeps_legacy_domain_and_warns(
+        self, direction, barrier, option_type, action
+    ):
+        ud, spec = self._case(direction, barrier, option_type, action)
+        params = PDEParams.for_barriers(monitoring=BarrierMonitoring.CONTINUOUS, smax_mult=4.0)
+        with pytest.warns(UserWarning, match="standard deviations of ln"):
+            legacy = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
+        closed_form = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+        assert abs(legacy / closed_form - 1.0) > 1e-2  # the legacy truncation bias
+
+
 class TestDiscreteKnockOutRebateAtMaturityHit:
     """Regression: a knock-out first hit at a maturity observation pays its rebate.
 

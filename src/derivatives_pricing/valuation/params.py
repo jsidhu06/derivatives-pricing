@@ -192,8 +192,18 @@ class PDEParams:
     Parameters
     ----------
     smax_mult
-        Multiplier for the maximum spot in the grid domain, where
-        ``S_max = smax_mult * max(spot, strike)``. Default: ``4.0``.
+        Spatial domain control. ``None`` (default) sizes the domain
+        automatically from ``sigma * sqrt(T)``: vanillas use the smallest
+        log-interval containing the spot and forward with 6 standard
+        deviations of ``ln(S_T)`` of margin (capped at ``4 * max(spot,
+        strike)`` on the uniform SPOT grid); barriers use the legacy
+        ``4 * max(spot, strike)`` span, widened on the LOG_SPOT grid when it
+        reaches fewer than 3 standard deviations; custom payoffs use the
+        legacy span. A float sets the legacy domain exactly:
+        ``[0, smax_mult * max(spot, strike)]`` on the SPOT grid and
+        ``[max(spot, strike) / smax_mult, smax_mult * max(spot, strike)]`` on
+        the LOG_SPOT grid. A boundary within 3 standard deviations of the
+        spot/forward triggers a warning.
     spot_steps
         Number of spatial grid steps. Higher values improve resolution.
         Default: ``200``.
@@ -228,7 +238,7 @@ class PDEParams:
         Default: ``False``.
     """
 
-    smax_mult: float = 4.0
+    smax_mult: float | None = None
     spot_steps: int = 200
     time_steps: int = 200
     omega: float = 1.5
@@ -302,8 +312,8 @@ class PDEParams:
                 raise ValidationError(
                     f"{name} must be an int, got {type(getattr(self, name)).__name__}"
                 )
-        if self.smax_mult <= 0:
-            raise ValidationError(f"smax_mult must be positive, got {self.smax_mult}")
+        if self.smax_mult is not None and not self.smax_mult > 1.0:
+            raise ValidationError(f"smax_mult must be > 1 (or None for auto), got {self.smax_mult}")
         if self.spot_steps < 3:
             raise ValidationError(f"spot_steps must be >= 3, got {self.spot_steps}")
         if self.time_steps < 1:
