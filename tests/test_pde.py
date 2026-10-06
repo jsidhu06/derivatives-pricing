@@ -9,6 +9,7 @@ QuantLib comparisons live in test_quantlib_comparison.py.
 from dataclasses import replace as dc_replace
 import datetime as dt
 import logging
+import warnings
 
 import numpy as np
 import pytest
@@ -32,7 +33,11 @@ from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.utils import calculate_year_fraction
 from derivatives_pricing.valuation import OptionValuation, UnderlyingData
 from derivatives_pricing.valuation.contracts import BarrierSpec, PayoffSpec
-from derivatives_pricing.valuation.pde import _FDBarrierValuation, _fd_barrier_ki_core
+from derivatives_pricing.valuation.pde import (
+    _FDBarrierValuation,
+    _fd_barrier_ki_core,
+    _psor_core,
+)
 from helpers import (
     flat_curve,
     market_data,
@@ -1227,3 +1232,73 @@ def test_american_barrier_vega_pde_scheme_grid_consistency(
     assert np.isclose(vega_cn_spot, vega_cn_log, rtol=vega_rtol, atol=vega_atol), (
         f"vega CN_LOG={vega_cn_log:.6f} vs CN_SPOT={vega_cn_spot:.6f}"
     )
+
+
+class TestPSORConvergence:
+    """PSOR non-convergence warns instead of passing silently."""
+
+    _GS = dict(american_solver=PDEEarlyExercise.GAUSS_SEIDEL)
+
+    def _american_put(self) -> object:
+        return spec(strike=100.0, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
+
+    def _barrier(self, action: BarrierAction) -> BarrierSpec:
+        return BarrierSpec(
+            option_type=OptionType.PUT,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=100.0,
+            maturity=MATURITY,
+            barrier=85.0,
+            direction=BarrierDirection.DOWN,
+            action=action,
+            currency="USD",
+        )
+
+    def test_vanilla_warns_when_psor_hits_max_iter(self):
+        params = PDEParams(spot_steps=100, time_steps=50, max_iter=1, **self._GS)
+        ov = OptionValuation(underlying(), self._american_put(), PricingMethod.PDE_FD, params)
+        with pytest.warns(UserWarning, match=r"PDE: PSOR did not converge within max_iter=1"):
+            ov.present_value()
+
+    @pytest.mark.parametrize(
+        "action,label",
+        [(BarrierAction.OUT, "PDE barrier"), (BarrierAction.IN, "PDE barrier KI")],
+    )
+    def test_barrier_warns_when_psor_hits_max_iter(self, action: BarrierAction, label: str):
+        params = PDEParams(spot_steps=100, time_steps=50, max_iter=1, **self._GS)
+        ov = OptionValuation(underlying(), self._barrier(action), PricingMethod.PDE_FD, params)
+        with pytest.warns(UserWarning, match=rf"{label}: PSOR did not converge"):
+            ov.present_value()
+
+    def test_no_warning_with_default_params(self):
+        params = PDEParams(**self._GS)
+        ov = OptionValuation(underlying(), self._american_put(), PricingMethod.PDE_FD, params)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ov.present_value()
+        assert not [w for w in caught if "PSOR" in str(w.message)]
+
+    def test_converging_on_the_last_iteration_counts_as_converged(self):
+        """The iteration cap alone does not mean failure: check the flag at the boundary."""
+
+        def solve(max_iter: int) -> tuple[int, bool]:
+            n = 8
+            _, iters, converged = _psor_core(
+                np.zeros(n),
+                np.zeros(n),
+                np.ones(n),
+                np.full(n, -0.4),
+                np.full(n, 2.0),
+                np.full(n, -0.4),
+                0.0,
+                0.0,
+                1.2,
+                1e-10,
+                max_iter,
+            )
+            return iters, converged
+
+        needed, converged = solve(10_000)
+        assert converged
+        assert solve(needed) == (needed, True)
+        assert solve(needed - 1) == (needed - 1, False)

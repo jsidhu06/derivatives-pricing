@@ -32,6 +32,7 @@ import math
 import threading
 import datetime as dt
 import warnings
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -815,13 +816,19 @@ def _psor_core(
     omega: float,
     tol: float,
     max_iter: int,
-) -> tuple[np.ndarray, int]:
-    """Numba-accelerated Projected SOR (Gauss-Seidel with overrelaxation)."""
+) -> tuple[np.ndarray, int, bool]:
+    """Numba-accelerated Projected SOR (Gauss-Seidel with overrelaxation).
+
+    Returns the solution, the iterations used and whether the largest update
+    fell below *tol* (a solve that converges on iteration *max_iter* counts
+    as converged).
+    """
     n = x.shape[0]
     for k in range(n):
         if x[k] < exercise_j[k]:
             x[k] = exercise_j[k]
     iter_used = max_iter
+    converged = False
     for iter_idx in range(max_iter):
         max_diff = 0.0
         for k in range(n):
@@ -838,8 +845,9 @@ def _psor_core(
                 max_diff = diff
         if max_diff < tol:
             iter_used = iter_idx + 1
+            converged = True
             break
-    return x, iter_used
+    return x, iter_used, converged
 
 
 def _psor_solve(
@@ -854,10 +862,11 @@ def _psor_solve(
     omega: float,
     tol: float,
     max_iter: int,
-) -> tuple[np.ndarray, int]:
+) -> tuple[np.ndarray, int, bool]:
     """Projected SOR (Gauss-Seidel with overrelaxation) for American exercise.
 
-    Returns the updated interior values and the number of iterations used.
+    Returns the updated interior values, the number of iterations used and
+    whether the iteration converged.
     Delegates to a Numba-JIT compiled inner loop when numba is available.
     """
     return _psor_core(
@@ -875,6 +884,48 @@ def _psor_solve(
     )
 
 
+@dataclass
+class _PsorStats:
+    """PSOR iteration counts over one PDE solve."""
+
+    steps: int = 0
+    total_iters: int = 0
+    max_iters: int = 0
+    not_converged: int = 0
+
+    def record(self, result: tuple[int, bool] | None) -> None:
+        """Add one time step's (iterations, converged) pair; None if PSOR was not used."""
+        if result is None:
+            return
+        iters, converged = result
+        self.steps += 1
+        self.total_iters += iters
+        self.max_iters = max(self.max_iters, iters)
+        if not converged:
+            self.not_converged += 1
+
+    def report(self, label: str, *, max_iter: int | None, tol: float | None) -> None:
+        """Log the counts, and warn if any time step failed to converge."""
+        if self.steps == 0:
+            return
+        logger.debug(
+            "%s PSOR steps=%d avg_iters=%.2f max_iters=%d not_converged=%d",
+            label,
+            self.steps,
+            self.total_iters / self.steps,
+            self.max_iters,
+            self.not_converged,
+        )
+        if self.not_converged:
+            warnings.warn(
+                f"{label}: PSOR did not converge within max_iter={max_iter} (tol={tol}) "
+                f"on {self.not_converged} of {self.steps} time steps; the American price "
+                "may be inaccurate. Increase max_iter, or use "
+                "american_solver=PDEEarlyExercise.INTRINSIC.",
+                stacklevel=2,
+            )
+
+
 def _implicit_cn_step(
     V_prev: np.ndarray,
     V: np.ndarray,
@@ -890,10 +941,11 @@ def _implicit_cn_step(
     omega: float | None,
     tol: float | None,
     max_iter: int | None,
-) -> tuple[np.ndarray, int | None]:
+) -> tuple[np.ndarray, tuple[int, bool] | None]:
     """One implicit or Crank-Nicolson time step (with optional early exercise).
 
-    Returns the updated V array and the PSOR iteration count (None if PSOR was not used).
+    Returns the updated V array and the PSOR (iterations, converged) pair
+    (None if PSOR was not used).
     """
     if method is PDEMethod.CRANK_NICOLSON:
         a = a * 0.5
@@ -916,7 +968,7 @@ def _implicit_cn_step(
     rhs_adj[-1] -= c[-1] * V[-1]
 
     x = _solve_tridiagonal_thomas(a[1:], diag, c[:-1], rhs_adj)
-    psor_iters: int | None = None
+    psor_result: tuple[int, bool] | None = None
 
     if intrinsic is None:
         V[j] = x
@@ -925,7 +977,7 @@ def _implicit_cn_step(
         if american_solver is PDEEarlyExercise.INTRINSIC:
             V[j] = np.maximum(x, exercise_j)
         else:
-            x, psor_iters = _psor_solve(
+            x, psor_iters, psor_converged = _psor_solve(
                 x,
                 exercise_j,
                 rhs,
@@ -939,8 +991,9 @@ def _implicit_cn_step(
                 int(max_iter),
             )
             V[j] = x
+            psor_result = (psor_iters, psor_converged)
 
-    return V, psor_iters
+    return V, psor_result
 
 
 def _validate_fd_inputs(
@@ -1280,10 +1333,7 @@ def _fd_core(
     else:
         dq_0T = None
 
-    psor_steps = 0
-    psor_total_iters = 0
-    psor_max_iters = 0
-    psor_not_converged = 0
+    psor_stats = _PsorStats()
 
     steps = _build_time_step_schedule(tau_grid, method, rannacher_steps)
 
@@ -1362,7 +1412,7 @@ def _fd_core(
                 r_dt=r * d_tau if implicit_discounting else 0.0,
             )
         else:
-            V, psor_iters = _implicit_cn_step(
+            V, psor_result = _implicit_cn_step(
                 V_prev,
                 V,
                 j,
@@ -1378,12 +1428,7 @@ def _fd_core(
                 tol,
                 max_iter,
             )
-            if psor_iters is not None:
-                psor_steps += 1
-                psor_total_iters += psor_iters
-                psor_max_iters = max(psor_max_iters, psor_iters)
-                if psor_iters == int(max_iter):
-                    psor_not_converged += 1
+            psor_stats.record(psor_result)
 
         # Apply discrete dividend jump at tau if needed
         if dividend_map:
@@ -1393,15 +1438,7 @@ def _fd_core(
                 if early_exercise:
                     V[:] = np.maximum(V, intrinsic)
 
-    if psor_steps > 0:
-        avg_iters = psor_total_iters / psor_steps
-        logger.debug(
-            "PDE PSOR steps=%d avg_iters=%.2f max_iters=%d not_converged=%d",
-            psor_steps,
-            avg_iters,
-            psor_max_iters,
-            psor_not_converged,
-        )
+    psor_stats.report("PDE", max_iter=max_iter, tol=tol)
 
     # Apply pricing-date dividend: the input spot is cum-dividend, so
     # interpolate at S₀ − D to get the ex-dividend option value.
@@ -2148,10 +2185,7 @@ def _fd_barrier_ko_core(
     else:
         dq_0T = None
 
-    psor_steps = 0
-    psor_total_iters = 0
-    psor_max_iters = 0
-    psor_not_converged = 0
+    psor_stats = _PsorStats()
 
     steps = _build_time_step_schedule(tau_grid, method, rannacher_steps)
 
@@ -2263,7 +2297,7 @@ def _fd_barrier_ko_core(
                 r_dt=r * d_tau if implicit_discounting else 0.0,
             )
         else:
-            V, psor_iters = _implicit_cn_step(
+            V, psor_result = _implicit_cn_step(
                 V_prev,
                 V,
                 j,
@@ -2279,12 +2313,7 @@ def _fd_barrier_ko_core(
                 tol,
                 max_iter,
             )
-            if psor_iters is not None:
-                psor_steps += 1
-                psor_total_iters += psor_iters
-                psor_max_iters = max(psor_max_iters, psor_iters)
-                if psor_iters == int(max_iter):
-                    psor_not_converged += 1
+            psor_stats.record(psor_result)
 
         # ── Discrete dividend jump ────────────────────────────────────
         if dividend_map:
@@ -2314,15 +2343,7 @@ def _fd_barrier_ko_core(
                     mask = alive & (intrinsic > V)
                     V[mask] = intrinsic[mask]
 
-    if psor_steps > 0:
-        avg_iters = psor_total_iters / psor_steps
-        logger.debug(
-            "PDE barrier PSOR steps=%d avg_iters=%.2f max_iters=%d not_converged=%d",
-            psor_steps,
-            avg_iters,
-            psor_max_iters,
-            psor_not_converged,
-        )
+    psor_stats.report("PDE barrier", max_iter=max_iter, tol=tol)
 
     interp_spot = spot - pricing_div if pricing_div is not None else spot
     price = float(np.interp(interp_spot, S, V))
@@ -2578,10 +2599,7 @@ def _fd_barrier_ki_core(
     else:
         dq_0T = None
 
-    psor_steps = 0
-    psor_total_iters = 0
-    psor_max_iters = 0
-    psor_not_converged = 0
+    psor_stats = _PsorStats()
 
     steps = _build_time_step_schedule(tau_grid, method, rannacher_steps)
 
@@ -2661,7 +2679,7 @@ def _fd_barrier_ki_core(
                 r_dt=r * d_tau if implicit_discounting else 0.0,
             )
         else:
-            V_act, psor_iters = _implicit_cn_step(
+            V_act, psor_result = _implicit_cn_step(
                 V_act_prev,
                 V_act,
                 j,
@@ -2677,12 +2695,7 @@ def _fd_barrier_ki_core(
                 tol,
                 max_iter,
             )
-            if psor_iters is not None:
-                psor_steps += 1
-                psor_total_iters += psor_iters
-                psor_max_iters = max(psor_max_iters, psor_iters)
-                if psor_iters == int(max_iter):  # type: ignore[arg-type]
-                    psor_not_converged += 1
+            psor_stats.record(psor_result)
 
         # ── Step B: PDE step for inactive surface (no exercise) ──────────
         # For continuous monitoring the inactive surface is solved on a
@@ -2799,15 +2812,7 @@ def _fd_barrier_ki_core(
                     else:
                         V_inact[j_H:] = V_act[j_H:]
 
-    if psor_steps > 0:
-        avg_iters = psor_total_iters / psor_steps
-        logger.debug(
-            "PDE barrier KI PSOR steps=%d avg_iters=%.2f max_iters=%d not_converged=%d",
-            psor_steps,
-            avg_iters,
-            psor_max_iters,
-            psor_not_converged,
-        )
+    psor_stats.report("PDE barrier KI", max_iter=max_iter, tol=tol)
 
     # Price from inactive surface (option starts inactive)
     interp_spot = spot - pricing_div if pricing_div is not None else spot
