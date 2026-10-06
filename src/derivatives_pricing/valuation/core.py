@@ -479,8 +479,43 @@ class OptionValuation:
         return float(self._apply_control_variate(base_pv))
 
     @_memoize_result
+    def std_error(self) -> float | None:
+        """Monte Carlo standard error of ``present_value()``.
+
+        Antithetic pairs are averaged before the sample variance; moment
+        matching is ignored. Same simulation as the PV, so no extra cost.
+        NaN with fewer than two independent samples.
+
+        Returns ``None`` for the deterministic methods (ANALYTICAL, BINOMIAL,
+        PDE_FD): they have no sampling error to report. ``None`` means "not
+        applicable", not zero error; their discretisation error is not
+        measured here. This differs from ``present_value_pathwise()``, which
+        raises for those methods because per-path values do not exist there.
+
+        Raises
+        ------
+        UnsupportedFeatureError
+            For Monte Carlo with ``control_variate_european``: a sampling error
+            exists, but the adjusted estimator's error depends on the
+            covariance between the American and European legs, which is not
+            computed.
+        """
+        if self._pricing_method is not PricingMethod.MONTE_CARLO:
+            return None
+        if getattr(self._params, "control_variate_european", False):
+            raise UnsupportedFeatureError(
+                "std_error is not supported with control_variate_european for MONTE_CARLO pricing."
+            )
+        self.present_value()  # memoised; the engine records its standard error
+        return float(self._impl.std_error())
+
+    @_memoize_result
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted pathwise present values (Monte Carlo only).
+
+        Raises ``UnsupportedFeatureError`` for the deterministic methods,
+        which have no per-path values; ``std_error()`` instead returns
+        ``None`` for them.
 
         The returned array is a read-only view over the engine's cached
         pathwise PVs.  The read-only flag is enforced by numpy
