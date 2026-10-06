@@ -26,7 +26,6 @@ import datetime as dt
 import logging
 import threading
 import numpy as np
-import pandas as pd
 from ..utils import calculate_year_fraction, coerce_positive_float
 from ..stochastic_processes import PathSimulation, GBMProcess
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
@@ -62,7 +61,16 @@ from .barrier_analytical import _AnalyticalBarrierValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation, _FDBarrierValuation
 from ..rates import DiscountCurve
 from ..market_environment import MarketData
-from .contracts import AsianSpec, BarrierSpec, OptionSpec, PayoffSpec, VanillaSpec
+from .contracts import (
+    AsianSpec,
+    BarrierSpec,
+    OptionSpec,
+    PayoffSpec,
+    VanillaSpec,
+    _asian_fixing_schedule,
+    _barrier_monitoring_schedule,
+    contract_event_dates,
+)
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
 logger = logging.getLogger(__name__)
@@ -427,6 +435,23 @@ class OptionValuation:
                             sim_config,
                             observation_dates=underlying.observation_dates | extra,
                         )
+            if underlying.correlation_context is not None:
+                # The context fixes the grid for every asset: the dates this
+                # contract needs must already be on it (injecting them would
+                # misalign this asset's draws with the others').
+                grid = set(underlying.correlation_context.time_grid)
+                missing = [
+                    d for d in contract_event_dates(spec, underlying.pricing_date) if d not in grid
+                ]
+                if missing:
+                    raise ValidationError(
+                        f"Contract dates {[d.isoformat() for d in missing]} are missing from "
+                        f"the CorrelationContext's shared time grid of process "
+                        f"'{underlying.name}'. Build the grid with shared_time_grid(..., "
+                        "specs=...) listing every contract priced on the context."
+                    )
+                sim_config = underlying._sim_config
+
             # Defensive copy: PathSimulation carries mutable simulation state
             # (time_grid, _last_normals) that is written during simulate().
             # Copying for thread-safety
@@ -795,6 +820,16 @@ class OptionValuation:
         if bumped_date >= self.maturity:
             return 0.0
 
+        if (
+            isinstance(self._underlying, PathSimulation)
+            and self._underlying.correlation_context is not None
+        ):
+            raise UnsupportedFeatureError(
+                "Numerical theta moves the pricing date, but a process in a "
+                "CorrelationContext simulates on the context's fixed grid. Use "
+                "GreekCalculationMethod.PATHWISE or LIKELIHOOD_RATIO instead."
+            )
+
         value_now = self.present_value()
 
         underlying_bumped = self._bump_underlying(pricing_date=bumped_date)
@@ -1072,21 +1107,7 @@ class OptionValuation:
         """Resolve the contractual Asian fixing schedule as datetimes."""
         if not isinstance(self._spec, AsianSpec):
             raise ConfigurationError("Asian fixing schedule requested for non-Asian spec.")
-
-        spec = self._spec
-        if spec.fixing_dates is not None:
-            return tuple(spec.fixing_dates)
-
-        assert spec.num_observations is not None
-        averaging_start = spec.averaging_start or self.pricing_date
-
-        return tuple(
-            pd.date_range(
-                start=averaging_start,
-                end=self.maturity,
-                periods=spec.num_observations,
-            ).to_pydatetime()
-        )
+        return _asian_fixing_schedule(self._spec, self.pricing_date)
 
     def _barrier_monitoring_dates(self) -> tuple[dt.datetime, ...] | None:
         """Resolve the barrier monitoring schedule as datetimes.
@@ -1095,24 +1116,7 @@ class OptionValuation:
         """
         if not isinstance(self._spec, BarrierSpec):
             raise ConfigurationError("Barrier monitoring schedule requested for non-Barrier spec.")
-
-        spec = self._spec
-        if spec.monitoring is BarrierMonitoring.CONTINUOUS:
-            return None
-
-        if spec.monitoring_dates is not None:
-            return tuple(spec.monitoring_dates)
-
-        # N+1 dates from pricing_date to maturity; drop t=0 to leave N dates
-        # at T/N, 2T/N, ..., T.  Matches the standard academic convention for
-        # discretely-monitored barriers.
-        return tuple(
-            pd.date_range(
-                start=self.pricing_date,
-                end=self.maturity,
-                periods=spec.num_observations + 1,
-            )[1:].to_pydatetime()
-        )
+        return _barrier_monitoring_schedule(self._spec, self.pricing_date)
 
     def _barrier_triggered_at_inception(self) -> bool:
         """Return ``True`` only if the barrier has been hit AND that hit is
