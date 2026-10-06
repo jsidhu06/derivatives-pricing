@@ -57,20 +57,36 @@ _YEAR_DAYS: dict[DayCountConvention, float] = {
 }
 
 
+def _std_error_of_mean(pv_pathwise: np.ndarray, *, antithetic_pairs: bool) -> float:
+    """Standard error of the mean of *pv_pathwise*.
+
+    With antithetic sampling, path ``p`` and its mirror ``p + n/2`` are
+    negatively correlated, so each pair is averaged into one sample first;
+    treating the ``n`` values as independent would misstate the error.
+    Moment matching couples the draws weakly; that effect is ignored, as is
+    standard. NaN with fewer than two samples.
+    """
+    samples = pv_pathwise
+    if antithetic_pairs:
+        half = pv_pathwise.size // 2
+        samples = 0.5 * (pv_pathwise[:half] + pv_pathwise[half:])
+    n = samples.size
+    if n < 2:
+        return float("nan")
+    return float(np.std(samples, ddof=1) / np.sqrt(n))
+
+
 def _warn_if_high_std_error(
     *,
-    pv_pathwise: np.ndarray,
+    std_error: float,
     pv_mean: float,
+    n_paths: int,
     params: MonteCarloParams,
     label: str,
 ) -> None:
     """Emit a warning log if MC standard error is high relative to the PV estimate."""
-    if params.std_error_warn_ratio is None:
+    if params.std_error_warn_ratio is None or np.isnan(std_error):
         return
-    n_paths = pv_pathwise.size
-    if n_paths < 2:
-        return
-    std_error = float(np.std(pv_pathwise, ddof=1) / np.sqrt(n_paths))
     scale = max(abs(pv_mean), 1.0e-12)
     ratio = std_error / scale
     logger.debug(
@@ -313,6 +329,43 @@ class _MCValuationBase:
         self.mc_params = valuation_ctx.params
         assert isinstance(valuation_ctx.underlying, PathSimulation)
         self.underlying = valuation_ctx.underlying
+        self._std_error: float | None = None
+
+    def _antithetic_pairs(self, n_paths: int) -> bool:
+        """True when the simulation drew antithetic pairs (path p mirrors p + n/2).
+
+        Mirrors ``PathSimulation._standard_normals``: antithetic draws are
+        skipped for an odd path count and under a correlation context.
+        """
+        return (
+            n_paths % 2 == 0
+            and self.underlying.correlation_context is None
+            and self.underlying._sim_config.antithetic
+        )
+
+    def _record_std_error(self, pv_pathwise: np.ndarray, pv: float, *, label: str) -> None:
+        """Store the standard error of *pv* and run the high-error monitor."""
+        self._std_error = _std_error_of_mean(
+            pv_pathwise, antithetic_pairs=self._antithetic_pairs(pv_pathwise.size)
+        )
+        _warn_if_high_std_error(
+            std_error=self._std_error,
+            pv_mean=pv,
+            n_paths=pv_pathwise.size,
+            params=self.mc_params,
+            label=label,
+        )
+
+    def present_value(self) -> float:
+        """Return the scalar present value (implemented by each engine)."""
+        raise NotImplementedError
+
+    def std_error(self) -> float:
+        """Standard error of ``present_value()`` from the same simulation."""
+        if self._std_error is None:
+            self.present_value()
+        assert self._std_error is not None
+        return self._std_error
 
 
 class _MCEuropeanValuation(_MCValuationBase):
@@ -348,12 +401,7 @@ class _MCEuropeanValuation(_MCValuationBase):
             pv_pathwise.size,
             len(self.underlying.time_grid) - 1,
         )
-        _warn_if_high_std_error(
-            pv_pathwise=pv_pathwise,
-            pv_mean=pv,
-            params=self.mc_params,
-            label="European",
-        )
+        self._record_std_error(pv_pathwise, pv, label="European")
         return pv
 
     def present_value_pathwise(self) -> np.ndarray:
@@ -687,12 +735,7 @@ class _MCAmericanValuation(_MCValuationBase):
             len(self.underlying.time_grid) - 1,
             self.mc_params.deg,
         )
-        _warn_if_high_std_error(
-            pv_pathwise=pv_pathwise,
-            pv_mean=pv,
-            params=self.mc_params,
-            label="American",
-        )
+        self._record_std_error(pv_pathwise, pv, label="American")
         return pv
 
     def present_value_pathwise(self) -> np.ndarray:
@@ -834,12 +877,7 @@ class _MCAsianEuropeanValuation(_MCAsianBase):
             pv_pathwise.size,
             len(self.underlying.time_grid) - 1,
         )
-        _warn_if_high_std_error(
-            pv_pathwise=pv_pathwise,
-            pv_mean=pv,
-            params=self.mc_params,
-            label="Asian",
-        )
+        self._record_std_error(pv_pathwise, pv, label="Asian")
         return pv
 
     def present_value_pathwise(self) -> np.ndarray:
@@ -1054,12 +1092,7 @@ class _MCAsianAmericanValuation(_MCAsianBase):
             len(self.underlying.time_grid) - 1,
             self.mc_params.deg,
         )
-        _warn_if_high_std_error(
-            pv_pathwise=pv_pathwise,
-            pv_mean=pv,
-            params=self.mc_params,
-            label="Asian American",
-        )
+        self._record_std_error(pv_pathwise, pv, label="Asian American")
         return pv
 
     def present_value_pathwise(self) -> np.ndarray:
@@ -1613,12 +1646,7 @@ class _MCBarrierEuropeanValuation(_MCBarrierBase):
             pv_pathwise.size,
             len(self.underlying.time_grid) - 1,
         )
-        _warn_if_high_std_error(
-            pv_pathwise=pv_pathwise,
-            pv_mean=pv,
-            params=self.mc_params,
-            label="Barrier European",
-        )
+        self._record_std_error(pv_pathwise, pv, label="Barrier European")
         return pv
 
 
@@ -1956,10 +1984,5 @@ class _MCBarrierAmericanValuation(_MCBarrierBase):
             len(self.underlying.time_grid) - 1,
             self.mc_params.deg,
         )
-        _warn_if_high_std_error(
-            pv_pathwise=pv_pathwise,
-            pv_mean=pv,
-            params=self.mc_params,
-            label="Barrier American",
-        )
+        self._record_std_error(pv_pathwise, pv, label="Barrier American")
         return pv

@@ -3,7 +3,14 @@
 import numpy as np
 import pytest
 
-from derivatives_pricing.enums import ExerciseType, OptionType, PricingMethod
+from derivatives_pricing.enums import (
+    BarrierAction,
+    BarrierDirection,
+    ExerciseType,
+    OptionType,
+    PricingMethod,
+)
+from derivatives_pricing.exceptions import UnsupportedFeatureError
 from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.stochastic_processes import (
     GBMParams,
@@ -19,10 +26,12 @@ from conftest import (
     SPOT,
     VOL,
 )
-from helpers import flat_curve, market_data, pv, spec
+from helpers import CURRENCY, flat_curve, market_data, pv, spec
 from derivatives_pricing.valuation import (
+    BarrierSpec,
     MonteCarloParams,
     OptionValuation,
+    PayoffSpec,
     UnderlyingData,
 )
 
@@ -128,3 +137,165 @@ class TestMCSValuation:
         assert isinstance(pv_pathwise, np.ndarray)
         assert pv_pathwise.shape[0] == 1000
         assert np.isclose(np.mean(pv_pathwise), pv_scalar)
+
+
+def _plain_gbm(paths: int, *, antithetic: bool, vol: float = VOL) -> GBMProcess:
+    """GBM with i.i.d. draws unless *antithetic*; moment matching off."""
+    sim_config = SimulationConfig(
+        paths=paths,
+        num_steps=4,
+        end_date=MATURITY,
+        antithetic=antithetic,
+        moment_matching=False,
+    )
+    return GBMProcess(_market_data(), GBMParams(initial_value=SPOT, volatility=vol), sim_config)
+
+
+class TestMCStdError:
+    """OptionValuation.std_error(): Monte Carlo only, calibrated, antithetic-aware."""
+
+    @pytest.mark.parametrize(
+        "method", [PricingMethod.BSM, PricingMethod.BINOMIAL, PricingMethod.PDE_FD]
+    )
+    def test_none_for_deterministic_methods(self, method: PricingMethod):
+        ud = UnderlyingData(initial_value=SPOT, volatility=VOL, market_data=_market_data())
+        assert OptionValuation(ud, spec(), method).std_error() is None
+
+    def test_positive_and_memoised_for_mc(self):
+        ov = OptionValuation(
+            _gbm(paths=20_000, num_steps=4), spec(), PricingMethod.MONTE_CARLO, params=MC_PARAMS
+        )
+        se = ov.std_error()
+        assert se is not None and se > 0.0
+        assert ov.std_error() == se
+
+    def test_american_lsm_reports_std_error(self):
+        ov = OptionValuation(
+            _gbm(paths=20_000, num_steps=4),
+            spec(OptionType.PUT, ExerciseType.AMERICAN),
+            PricingMethod.MONTE_CARLO,
+            params=MC_PARAMS,
+        )
+        se = ov.std_error()
+        assert se is not None and se > 0.0
+
+    @pytest.mark.parametrize("antithetic,strike", [(False, 100.0), (True, 60.0)])
+    def test_matches_seed_to_seed_spread(self, antithetic: bool, strike: float):
+        """Reported SE should agree with the empirical seed-to-seed PV dispersion.
+
+        Across 20 independent seeds, the sample sd of the PVs should be close
+        to the mean reported SE. If the SE were known exactly the ratio would
+        be chi(19)/sqrt(19) (95% in [0.68, 1.31]); it is estimated, so the
+        band is deliberately wider.
+
+        The antithetic case uses a deep ITM call, nearly linear in S_T, so
+        mirrored paths are strongly negatively correlated: the paired SE gives
+        a ratio of 0.90 here, while treating mirrored paths as independent
+        gives 0.18 and fails. An ATM call would not discriminate (unpaired
+        ratio 0.61, inside the band).
+        """
+        process = _plain_gbm(20_000, antithetic=antithetic)
+        pvs, ses = [], []
+        for seed in range(1000, 1020):
+            ov = OptionValuation(
+                process,
+                spec(strike=strike),
+                PricingMethod.MONTE_CARLO,
+                params=MonteCarloParams(random_seed=seed),
+            )
+            pvs.append(ov.present_value())
+            ses.append(ov.std_error())
+        ratio = np.std(pvs, ddof=1) / np.mean(ses)
+        assert 0.6 < ratio < 1.4
+
+    def test_european_within_a_few_std_errors_of_bsm(self):
+        """Default MC settings (antithetic + moment matching) across seeds."""
+        ud = UnderlyingData(initial_value=SPOT, volatility=VOL, market_data=_market_data())
+        bsm = OptionValuation(ud, spec(), PricingMethod.BSM).present_value()
+        for seed in range(1000, 1005):
+            ov = OptionValuation(
+                _gbm(paths=20_000, num_steps=4),
+                spec(),
+                PricingMethod.MONTE_CARLO,
+                params=MonteCarloParams(random_seed=seed),
+            )
+            se = ov.std_error()
+            assert se is not None
+            assert abs(ov.present_value() - bsm) < 4.0 * se
+
+    def test_averages_antithetic_pairs(self):
+        """Antithetic pairing cuts the SE of the payoff S_T by the expected factor.
+
+        Under GBM, S_T = F e^{-x^2/2 + xZ} with x = sigma sqrt(T); a mirrored
+        pair averages to F e^{-x^2/2} cosh(xZ). With n total paths (n/2
+        pairs), plain sampling has SE^2 = Var(e^{xZ}) / n and paired
+        sampling SE^2 = Var(cosh xZ) / (n/2), so the ratio is
+
+            sqrt(2 Var(cosh xZ) / Var(e^{xZ})),
+            Var(cosh xZ) = (1 + e^{2x^2}) / 2 - e^{x^2},
+            Var(e^{xZ}) = e^{2x^2} - e^{x^2},
+
+        about x for small x. Here sigma = 0.2 and T = 1, so x = 0.2 and the
+        ratio is 0.198 (measured 0.197). Treating mirrored paths as
+        independent would report roughly the plain SE (ratio ~1) instead.
+        The 0.3 bound is a loose regression check.
+        """
+        payoff = PayoffSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            maturity=MATURITY,
+            payoff_fn=lambda s: s,
+            currency=CURRENCY,
+        )
+
+        def se_with(antithetic: bool) -> float:
+            process = _plain_gbm(20_000, antithetic=antithetic)
+            se = OptionValuation(
+                process, payoff, PricingMethod.MONTE_CARLO, params=MC_PARAMS
+            ).std_error()
+            assert se is not None
+            return se
+
+        assert se_with(True) < 0.3 * se_with(False)
+
+    def test_nan_with_a_single_antithetic_pair(self):
+        """One pair is one independent sample, so the ddof=1 variance is undefined."""
+        ov = OptionValuation(
+            _plain_gbm(2, antithetic=True), spec(), PricingMethod.MONTE_CARLO, params=MC_PARAMS
+        )
+        se = ov.std_error()
+        assert se is not None and np.isnan(se)
+
+    def test_rejects_control_variate(self):
+        ov = OptionValuation(
+            _gbm(paths=20_000, num_steps=4),
+            spec(OptionType.PUT, ExerciseType.AMERICAN),
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42, control_variate_european=True),
+        )
+        with pytest.raises(UnsupportedFeatureError, match="std_error is not supported"):
+            ov.std_error()
+
+    def test_continuous_barrier_within_a_few_std_errors_of_closed_form(self):
+        """Under GBM, Brownian-bridge survival weighting removes the discrete-monitoring
+        bias, so MC and the closed form should agree within sampling error."""
+        barrier = BarrierSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=100.0,
+            maturity=MATURITY,
+            barrier=115.0,
+            direction=BarrierDirection.UP,
+            action=BarrierAction.OUT,
+            currency=CURRENCY,
+        )
+        ud = UnderlyingData(initial_value=SPOT, volatility=0.25, market_data=_market_data())
+        closed_form = OptionValuation(ud, barrier, PricingMethod.BSM).present_value()
+        process = GBMProcess(
+            _market_data(),
+            GBMParams(initial_value=SPOT, volatility=0.25),
+            SimulationConfig(paths=200_000, num_steps=26, end_date=MATURITY),
+        )
+        ov = OptionValuation(process, barrier, PricingMethod.MONTE_CARLO, params=MC_PARAMS)
+        se = ov.std_error()
+        assert se is not None and se > 0.0
+        assert abs(ov.present_value() - closed_form) < 4.0 * se
