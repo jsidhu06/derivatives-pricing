@@ -34,7 +34,7 @@ _BSM_OTM_PUT_110 = 2.7859  # S=110
 
 
 def _bsm(ud: UnderlyingData, sp: VanillaSpec) -> float:
-    return pv(ud, sp, PricingMethod.BSM)
+    return pv(ud, sp, PricingMethod.ANALYTICAL)
 
 
 class TestBSMValuation:
@@ -92,6 +92,6 @@ class TestBSMValuation:
 
     def test_bsm_present_value_returns_float(self):
         """Test BSM present_value returns a scalar float."""
-        valuation = OptionValuation(underlying(), spec(), PricingMethod.BSM)
+        valuation = OptionValuation(underlying(), spec(), PricingMethod.ANALYTICAL)
         result = valuation.present_value()
         assert isinstance(result, float)

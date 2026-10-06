@@ -282,14 +282,14 @@ def implied_volatility(
     max_iter: int = 100,
     log_timings: bool = False,
 ) -> ImpliedVolResult:
-    """Solve for implied volatility using BSM, binomial, or PDE pricing.
+    """Solve for implied volatility using ANALYTICAL, BINOMIAL, or PDE_FD pricing.
 
     Parameters
     ----------
     target_price
         Observed option price per unit (not multiplied by contract size).
     valuation
-        Option valuation configured for BSM (European) or
+        Option valuation configured for ANALYTICAL (European) or
         BINOMIAL/PDE_FD (European/American).
     method
         Root-finding method.
@@ -330,12 +330,14 @@ def implied_volatility(
             "Implied volatility is not supported for barrier specs: "
             "P(sigma) is not guaranteed to be monotonic in sigma."
         )
-    if valuation.pricing_method is PricingMethod.BSM:
+    if valuation.pricing_method is PricingMethod.ANALYTICAL:
         if valuation.exercise_type is not ExerciseType.EUROPEAN:
-            raise UnsupportedFeatureError("BSM implied volatility supports European options only.")
+            raise UnsupportedFeatureError(
+                "ANALYTICAL implied volatility supports European options only."
+            )
     elif valuation.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
         raise UnsupportedFeatureError(
-            "Implied volatility supports BSM, BINOMIAL, or PDE_FD pricing methods only."
+            "Implied volatility supports ANALYTICAL, BINOMIAL, or PDE_FD pricing methods only."
         )
 
     if not np.isfinite(target_price):
@@ -382,7 +384,7 @@ def implied_volatility(
         val = _valuation_with_vol(valuation, vol)
         greek_method = (
             GreekCalculationMethod.ANALYTICAL
-            if valuation.pricing_method is PricingMethod.BSM
+            if valuation.pricing_method is PricingMethod.ANALYTICAL
             else GreekCalculationMethod.NUMERICAL
         )
         vega = val.vega(greek_calc_method=greek_method)
@@ -390,7 +392,7 @@ def implied_volatility(
 
     if initial_vol is not None:
         initial = float(initial_vol)
-    elif valuation.pricing_method is PricingMethod.BSM:
+    elif valuation.pricing_method is PricingMethod.ANALYTICAL:
         initial = float(valuation.underlying.volatility or 0.2)
     else:
         initial = _non_bsm_initial_guess(valuation, target_price, low, high)

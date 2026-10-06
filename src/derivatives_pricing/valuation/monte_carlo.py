@@ -505,7 +505,7 @@ class _MCEuropeanValuation(_MCValuationBase):
                 f"Likelihood-ratio {greek} is undefined at sigma=0 (the lognormal "
                 "density degenerates to a Dirac at the forward, so the score "
                 "function diverges). Use GreekCalculationMethod.NUMERICAL or "
-                "PATHWISE instead, or call BSM analytical greeks."
+                "PATHWISE instead, or price with ANALYTICAL for closed-form greeks."
             )
 
     def delta_lr(self) -> float:

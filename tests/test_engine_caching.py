@@ -107,7 +107,7 @@ class TestOptionValuationOutputCache:
                 strike=100.0,
                 maturity=MATURITY,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         )
         ov.present_value()  # warm cache
         with patch.object(ov._impl, "present_value", wraps=ov._impl.present_value) as impl_pv:
@@ -125,7 +125,7 @@ class TestOptionValuationOutputCache:
                 strike=100.0,
                 maturity=MATURITY,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         )
         # ``epsilon`` only applies to NUMERICAL bump-and-revalue; BSM vanilla
         # auto-resolves to ANALYTICAL and would reject the bump kwarg.
@@ -283,7 +283,7 @@ class TestThreadSafeCaching:
                 strike=100.0,
                 maturity=MATURITY,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         )
         original = ov._impl.present_value
 
@@ -312,7 +312,7 @@ class TestThreadSafeCaching:
                 strike=100.0,
                 maturity=MATURITY,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         )
         # Count calls to the underlying impl.present_value inside delta's
         # spot-bump sub-valuations — with a deterministic ``epsilon`` the

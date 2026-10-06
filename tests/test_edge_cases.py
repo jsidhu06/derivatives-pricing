@@ -114,7 +114,7 @@ class TestZeroVolatility:
         spot = 100.0
         ud = _underlying(spot=spot, vol=0.0)
         spec = _spec(strike=strike, option_type=option_type)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
 
         if expected_positive:
             # Zero-vol BSM: Call = S*df_q - K*df_r, Put = K*df_r - S*df_q
@@ -134,7 +134,7 @@ class TestZeroVolatility:
         ud = _underlying(vol=0.0)
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
-            pv = _pv(ud, spec, PricingMethod.BSM)
+            pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
             # ATM with zero vol: forward = S*exp((r-q)*T), if forward == strike exactly
             # then it could be slightly non-zero due to discounting. Check it's small.
             assert abs(pv) < 5.0  # no large time value
@@ -197,7 +197,7 @@ class TestLowVolatility:
         spot = 100.0
         ud = _underlying(spot=spot, vol=self.VOL)
         spec = _spec(strike=strike, option_type=option_type)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
 
         df_r = float(ud.discount_curve.df(0.5))
         # With near-zero vol: Call ≈ S - K*df_r, Put ≈ K*df_r - S
@@ -218,7 +218,7 @@ class TestLowVolatility:
         """OTM with tiny vol has negligible probability of exercise."""
         ud = _underlying(vol=self.VOL)
         spec = _spec(strike=strike, option_type=option_type)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert pv < 0.01
 
 
@@ -245,7 +245,7 @@ class TestNearZeroExpiry:
         """BSM with 1-day expiry should be very close to intrinsic."""
         ud = _underlying(discount_curve=flat_curve(PRICING_DATE, self.SHORT_MATURITY, RATE))
         spec = _spec(strike=strike, option_type=option_type, maturity=self.SHORT_MATURITY)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isclose(pv, expected_intrinsic, atol=0.50)
 
     @pytest.mark.parametrize(
@@ -333,7 +333,7 @@ class TestPDEDomainFitsDistribution:
         ud = _bsm_market(maturity=maturity)
         spec = _spec(strike=100.0, option_type=option_type, maturity=maturity)
         pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
-        bsm = _pv(ud, spec, PricingMethod.BSM)
+        bsm = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isclose(pde, bsm, rtol=2e-3)  # measured <= 4.4e-4
 
     def _sweep_case(self, days, vol, moneyness, rates, space_grid, option_type):
@@ -345,7 +345,7 @@ class TestPDEDomainFitsDistribution:
             # The spot grid's 4x cap warns at high vol / long T (by design).
             warnings.simplefilter("ignore")
             pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
-        bsm = _pv(ud, spec, PricingMethod.BSM)
+        bsm = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isclose(pde, bsm, rtol=self._RTOL, atol=self._ATOL)
 
     @pytest.mark.parametrize("vol", [0.10, 0.20, 0.50])
@@ -373,7 +373,7 @@ class TestPDEDomainFitsDistribution:
         maturity = PRICING_DATE + dt.timedelta(days=1)
         ud = _bsm_market(maturity=maturity)
         spec = _spec(strike=100.0, maturity=maturity)
-        bsm = _pv(ud, spec, PricingMethod.BSM)
+        bsm = _pv(ud, spec, PricingMethod.ANALYTICAL)
 
         def err(n):
             params = PDEParams(space_grid=space_grid, spot_steps=n, time_steps=n)
@@ -391,7 +391,7 @@ class TestPDEDomainFitsDistribution:
         pde = OptionValuation(
             ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid)
         )
-        bsm = OptionValuation(ud, spec, PricingMethod.BSM)
+        bsm = OptionValuation(ud, spec, PricingMethod.ANALYTICAL)
         for greek in ("delta", "gamma", "theta"):
             # measured <= 7e-4
             assert np.isclose(getattr(pde, greek)(), getattr(bsm, greek)(), rtol=2e-3), greek
@@ -407,7 +407,7 @@ class TestPDEDomainFitsDistribution:
             warnings.simplefilter("always")
             pde = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
         assert not _pde_warnings(caught)
-        assert np.isclose(pde, _pv(ud, spec, PricingMethod.BSM), rtol=2e-3)
+        assert np.isclose(pde, _pv(ud, spec, PricingMethod.ANALYTICAL), rtol=2e-3)
 
     @pytest.mark.parametrize("days", [1, 7])
     @pytest.mark.parametrize("exercise", [ExerciseType.EUROPEAN, ExerciseType.AMERICAN])
@@ -434,7 +434,7 @@ class TestPDEDomainFitsDistribution:
         if exercise is ExerciseType.AMERICAN:
             ref = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
         else:
-            ref = _pv(ud, spec, PricingMethod.BSM)
+            ref = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isclose(pde, ref, rtol=0.0, atol=1e-6)
 
     def test_high_vol_long_dated_log_grid_is_accurate(self):
@@ -447,7 +447,9 @@ class TestPDEDomainFitsDistribution:
             warnings.simplefilter("always")
             pde = _pv(ud, spec, PricingMethod.PDE_FD, params=params)
         assert not _pde_warnings(caught)
-        assert np.isclose(pde, _pv(ud, spec, PricingMethod.BSM), rtol=1e-3)  # measured 3.5e-4
+        assert np.isclose(
+            pde, _pv(ud, spec, PricingMethod.ANALYTICAL), rtol=1e-3
+        )  # measured 3.5e-4
 
     def test_spot_grid_cap_warns(self):
         """The uniform spot grid keeps the 4x cap (wider would coarsen dS) and
@@ -464,7 +466,7 @@ class TestPDEDomainFitsDistribution:
         maturity = dt.datetime(2030, 1, 1)
         ud = _bsm_market(vol=0.8, maturity=maturity)
         spec = _spec(strike=100.0, maturity=maturity)
-        bsm = _pv(ud, spec, PricingMethod.BSM)
+        bsm = _pv(ud, spec, PricingMethod.ANALYTICAL)
 
         def pde(smax_mult):
             params = PDEParams(
@@ -511,7 +513,7 @@ class TestDeepMoneyness:
             return {"params": BinomialParams(num_steps=200)}
         return {}
 
-    @pytest.mark.parametrize("method", [PricingMethod.BSM, PricingMethod.BINOMIAL])
+    @pytest.mark.parametrize("method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL])
     def test_deep_itm_call(self, method):
         """Deep ITM call (S=200, K=50) should ≈ S*df_q - K*df_r."""
         spot, strike = 200.0, 50.0
@@ -523,7 +525,7 @@ class TestDeepMoneyness:
         expected = spot - strike * df_r  # no dividends ⇒ df_q = 1
         assert np.isclose(pv, expected, rtol=0.01)
 
-    @pytest.mark.parametrize("method", [PricingMethod.BSM, PricingMethod.BINOMIAL])
+    @pytest.mark.parametrize("method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL])
     def test_deep_otm_call(self, method):
         """Deep OTM call (S=50, K=200) should be nearly zero."""
         ud = _underlying(spot=50.0, vol=0.20)
@@ -531,7 +533,7 @@ class TestDeepMoneyness:
         pv = _pv(ud, spec, method, **self._params(method))
         assert pv < 0.01
 
-    @pytest.mark.parametrize("method", [PricingMethod.BSM, PricingMethod.BINOMIAL])
+    @pytest.mark.parametrize("method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL])
     def test_deep_itm_put(self, method):
         """Deep ITM put (S=50, K=200) should ≈ K*df_r - S*df_q."""
         spot, strike = 50.0, 200.0
@@ -543,7 +545,7 @@ class TestDeepMoneyness:
         expected = strike * df_r - spot
         assert np.isclose(pv, expected, rtol=0.01)
 
-    @pytest.mark.parametrize("method", [PricingMethod.BSM, PricingMethod.BINOMIAL])
+    @pytest.mark.parametrize("method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL])
     def test_deep_otm_put(self, method):
         """Deep OTM put (S=200, K=50) should be nearly zero."""
         ud = _underlying(spot=200.0, vol=0.20)
@@ -601,7 +603,7 @@ class TestExtremeRates:
             return {"params": BinomialParams(num_steps=200)}
         return {}
 
-    @pytest.mark.parametrize("method", [PricingMethod.BSM, PricingMethod.BINOMIAL])
+    @pytest.mark.parametrize("method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL])
     def test_high_rate_call_value_increases(self, method):
         """Higher r increases call value (forward price is higher)."""
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
@@ -612,7 +614,7 @@ class TestExtremeRates:
         pv_high = _pv(ud_high, spec, method, **self._params(method))
         assert pv_high > pv_low
 
-    @pytest.mark.parametrize("method", [PricingMethod.BSM, PricingMethod.BINOMIAL])
+    @pytest.mark.parametrize("method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL])
     def test_high_rate_put_value_decreases(self, method):
         """Higher r decreases put value (forward price is higher)."""
         spec = _spec(strike=100.0, option_type=OptionType.PUT)
@@ -628,7 +630,7 @@ class TestExtremeRates:
         ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, -0.02))
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
-            pv = _pv(ud, spec, PricingMethod.BSM)
+            pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
             assert pv > 0
             assert np.isfinite(pv)
 
@@ -664,7 +666,7 @@ class TestExtremeRates:
         """r = 50% should still produce finite BSM prices."""
         ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.50))
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isfinite(pv)
         assert pv > 0
 
@@ -672,7 +674,7 @@ class TestExtremeRates:
         """BSM and binomial should agree even at r = 25%."""
         ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.25))
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
-        bsm_pv = _pv(ud, spec, PricingMethod.BSM)
+        bsm_pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         bin_pv = _pv(
             ud,
             spec,
@@ -696,7 +698,7 @@ class TestHighVolatility:
             return {"params": BinomialParams(num_steps=200)}
         return {}
 
-    @pytest.mark.parametrize("method", [PricingMethod.BSM, PricingMethod.BINOMIAL])
+    @pytest.mark.parametrize("method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL])
     def test_high_vol_produces_finite_prices(self, method):
         """Very high vol should still yield finite, positive option prices."""
         ud = _underlying(vol=2.0)
@@ -709,8 +711,8 @@ class TestHighVolatility:
     def test_high_vol_call_exceeds_low_vol_call(self):
         """Higher vol increases option value (more upside potential)."""
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
-        pv_low = _pv(_underlying(vol=0.10), spec, PricingMethod.BSM)
-        pv_high = _pv(_underlying(vol=2.00), spec, PricingMethod.BSM)
+        pv_low = _pv(_underlying(vol=0.10), spec, PricingMethod.ANALYTICAL)
+        pv_high = _pv(_underlying(vol=2.00), spec, PricingMethod.ANALYTICAL)
         assert pv_high > pv_low
 
     def test_pde_high_vol_log_spot(self):
@@ -727,7 +729,7 @@ class TestHighVolatility:
                 space_grid=PDESpaceGrid.LOG_SPOT,
             ),
         )
-        bsm_pv = _pv(ud, spec, PricingMethod.BSM)
+        bsm_pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isclose(pv, bsm_pv, rtol=0.02)
 
 
@@ -882,7 +884,7 @@ class TestBarrierZeroVolatility:
         spot, strike, barrier = 100.0, 100.0, 130.0
         ud = _underlying(spot=spot, vol=vol)
         spec = self._barrier_spec(BarrierDirection.UP, BarrierAction.OUT, barrier, strike)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
 
         T, df_r = self._T_and_df(ud)
         S_T = spot * np.exp(RATE * T)
@@ -897,7 +899,7 @@ class TestBarrierZeroVolatility:
         spot, strike, barrier = 100.0, 100.0, 102.0  # forward (~102.54) > barrier
         ud = _underlying(spot=spot, vol=vol)
         spec = self._barrier_spec(BarrierDirection.UP, BarrierAction.OUT, barrier, strike)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
 
         T, _ = self._T_and_df(ud)
         S_T = spot * np.exp(RATE * T)
@@ -917,7 +919,7 @@ class TestBarrierZeroVolatility:
             strike,
             option_type=OptionType.PUT,
         )
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
 
         T, df_r = self._T_and_df(ud)
         S_T = spot * np.exp(RATE * T)
@@ -933,7 +935,7 @@ class TestBarrierZeroVolatility:
         spot, strike, barrier = 100.0, 100.0, 130.0
         ud = _underlying(spot=spot, vol=vol)
         spec = self._barrier_spec(BarrierDirection.UP, BarrierAction.IN, barrier, strike)
-        pv = _pv(ud, spec, PricingMethod.BSM)
+        pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isfinite(pv)
         assert pv == 0.0
 
@@ -962,7 +964,7 @@ class TestAsianZeroVolatility:
             num_observations=12,
         )
         with pytest.raises(ValidationError, match=r"volatility must be positive"):
-            _pv(ud, spec, PricingMethod.BSM)
+            _pv(ud, spec, PricingMethod.ANALYTICAL)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1034,7 +1036,7 @@ class TestVanillaZeroVolCrossEngine:
             currency="USD",
         )
 
-        bsm_pv = _pv(ud, spec, PricingMethod.BSM)
+        bsm_pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         mc_pv = OptionValuation(
             gbm,
             spec,

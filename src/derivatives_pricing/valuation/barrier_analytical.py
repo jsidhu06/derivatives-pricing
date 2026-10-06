@@ -448,7 +448,7 @@ class _AnalyticalBarrierValuation:
     """Analytical barrier option valuation engine.
 
     Dispatched by ``OptionValuation`` when ``spec`` is :class:`BarrierSpec` and
-    ``pricing_method`` is ``BSM``.
+    ``pricing_method`` is ``ANALYTICAL``.
     """
 
     def __init__(self, valuation_ctx: OptionValuation) -> None:
@@ -659,5 +659,5 @@ class _AnalyticalBarrierValuation:
         return OptionValuation(
             underlying=self.underlying,
             spec=vanilla_spec,
-            pricing_method=PricingMethod.BSM,
+            pricing_method=PricingMethod.ANALYTICAL,
         ).present_value()

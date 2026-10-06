@@ -121,7 +121,7 @@ class BinomialParams:
         Default: ``None``.
     control_variate_european:
         Apply Hull-style control variate adjustment for American options using
-        BSM European price and the numerical European price from the same method.
+        analytical European price and the numerical European price from the same method.
         Only applicable to vanilla call/put American pricing.
         Default: ``False``.
     log_timings:

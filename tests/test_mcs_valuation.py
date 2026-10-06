@@ -155,7 +155,7 @@ class TestMCStdError:
     """OptionValuation.std_error(): Monte Carlo only, calibrated, antithetic-aware."""
 
     @pytest.mark.parametrize(
-        "method", [PricingMethod.BSM, PricingMethod.BINOMIAL, PricingMethod.PDE_FD]
+        "method", [PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL, PricingMethod.PDE_FD]
     )
     def test_none_for_deterministic_methods(self, method: PricingMethod):
         ud = UnderlyingData(initial_value=SPOT, volatility=VOL, market_data=_market_data())
@@ -211,7 +211,7 @@ class TestMCStdError:
     def test_european_within_a_few_std_errors_of_bsm(self):
         """Default MC settings (antithetic + moment matching) across seeds."""
         ud = UnderlyingData(initial_value=SPOT, volatility=VOL, market_data=_market_data())
-        bsm = OptionValuation(ud, spec(), PricingMethod.BSM).present_value()
+        bsm = OptionValuation(ud, spec(), PricingMethod.ANALYTICAL).present_value()
         for seed in range(1000, 1005):
             ov = OptionValuation(
                 _gbm(paths=20_000, num_steps=4),
@@ -289,7 +289,7 @@ class TestMCStdError:
             currency=CURRENCY,
         )
         ud = UnderlyingData(initial_value=SPOT, volatility=0.25, market_data=_market_data())
-        closed_form = OptionValuation(ud, barrier, PricingMethod.BSM).present_value()
+        closed_form = OptionValuation(ud, barrier, PricingMethod.ANALYTICAL).present_value()
         process = GBMProcess(
             _market_data(),
             GBMParams(initial_value=SPOT, volatility=0.25),

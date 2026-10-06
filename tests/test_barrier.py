@@ -122,7 +122,7 @@ def _price(
         underlying = _underlying()
     if spec is None:
         spec = _barrier_spec(**spec_kw)
-    return OptionValuation(underlying, spec, PricingMethod.BSM).present_value()
+    return OptionValuation(underlying, spec, PricingMethod.ANALYTICAL).present_value()
 
 
 # ===========================================================================
@@ -391,7 +391,7 @@ class TestBarrierInOutParity:
             maturity=MATURITY,
         )
         pv_vanilla = OptionValuation(
-            self.underlying, vanilla_spec, PricingMethod.BSM
+            self.underlying, vanilla_spec, PricingMethod.ANALYTICAL
         ).present_value()
 
         assert np.isclose(pv_in + pv_out, pv_vanilla, rtol=1e-10), (
@@ -420,7 +420,7 @@ class TestBarrierInOutParity:
             strike=STRIKE,
             maturity=MATURITY,
         )
-        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.BSM).present_value()
+        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.ANALYTICAL).present_value()
 
         assert np.isclose(pv_in + pv_out, pv_vanilla, rtol=1e-10)
 
@@ -524,7 +524,7 @@ class TestBarrierAnalyticalPricing:
             maturity=MATURITY,
         )
         pv_vanilla = OptionValuation(
-            self.underlying, vanilla_spec, PricingMethod.BSM
+            self.underlying, vanilla_spec, PricingMethod.ANALYTICAL
         ).present_value()
 
         assert pv > 0.0
@@ -566,7 +566,7 @@ class TestBarrierAnalyticalPricing:
             maturity=MATURITY,
         )
         pv_vanilla = OptionValuation(
-            self.underlying, vanilla_spec, PricingMethod.BSM
+            self.underlying, vanilla_spec, PricingMethod.ANALYTICAL
         ).present_value()
 
         assert np.isclose(pv, pv_vanilla, rtol=1e-10)
@@ -630,7 +630,7 @@ class TestBarrierAnalyticalPricing:
             strike=STRIKE,
             maturity=MATURITY,
         )
-        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.BSM).present_value()
+        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.ANALYTICAL).present_value()
 
         # In/out parity should hold with non-flat curves too
         assert np.isclose(pv_in + pv_out, pv_vanilla, rtol=1e-10)
@@ -709,7 +709,7 @@ class TestBarrierInitialState:
             strike=STRIKE,
             maturity=MATURITY,
         )
-        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.BSM).present_value()
+        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.ANALYTICAL).present_value()
         assert np.isclose(pv, pv_vanilla, rtol=1e-10)
 
 
@@ -930,7 +930,7 @@ class TestBarrierDiscreteMonitoring:
             num_observations=4,
         )
         with pytest.raises(UnsupportedFeatureError, match="requires the spot on the live side"):
-            OptionValuation(_underlying(), spec, PricingMethod.BSM).present_value()
+            OptionValuation(_underlying(), spec, PricingMethod.ANALYTICAL).present_value()
         assert OptionValuation(_underlying(), spec, PricingMethod.PDE_FD).present_value() > 0.0
 
     def test_discrete_monitoring_dates_raises_for_analytical(self):
@@ -941,7 +941,7 @@ class TestBarrierDiscreteMonitoring:
             monitoring_dates=dates,
         )
         with pytest.raises(UnsupportedFeatureError, match="num_observations"):
-            OptionValuation(_underlying(), spec, PricingMethod.BSM).present_value()
+            OptionValuation(_underlying(), spec, PricingMethod.ANALYTICAL).present_value()
 
     def test_in_out_parity_discrete(self):
         """In/out parity holds under BG-adjusted discrete monitoring."""
@@ -962,7 +962,7 @@ class TestBarrierDiscreteMonitoring:
             strike=STRIKE,
             maturity=MATURITY,
         )
-        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.BSM).present_value()
+        pv_vanilla = OptionValuation(u, vanilla_spec, PricingMethod.ANALYTICAL).present_value()
 
         assert np.isclose(pv_in + pv_out, pv_vanilla, rtol=1e-10)
 
@@ -1109,7 +1109,7 @@ class TestBarrierPresentValueAgainstBoyleTianTable3:
     # Per-engine tolerances — BSM is analytical closed-form (tightest),
     # BINOMIAL and PDE_FD carry discretization noise.
     _TOLS: dict[PricingMethod, dict[str, float]] = {
-        PricingMethod.BSM: dict(rtol=1.0e-4, atol=7.5e-4),
+        PricingMethod.ANALYTICAL: dict(rtol=1.0e-4, atol=7.5e-4),
         PricingMethod.BINOMIAL: dict(rtol=5.0e-4, atol=2.0e-3),
         PricingMethod.PDE_FD: dict(rtol=2.0e-4, atol=1.0e-3),
     }
@@ -1123,14 +1123,14 @@ class TestBarrierPresentValueAgainstBoyleTianTable3:
     ):
         """Log all three engines side-by-side for one case, assert each."""
         engine_pvs: dict[PricingMethod, float] = {}
-        for method in (PricingMethod.BSM, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        for method in (PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
             engine_pvs[method] = float(self._paper_valuation(spec, method).present_value())
 
         logger.info(
             "BT98 Table3 %s | paper=%.4f dp_bsm=%.4f dp_bn=%.4f dp_fd=%.4f",
             request.node.callspec.id,
             paper_pv,
-            engine_pvs[PricingMethod.BSM],
+            engine_pvs[PricingMethod.ANALYTICAL],
             engine_pvs[PricingMethod.BINOMIAL],
             engine_pvs[PricingMethod.PDE_FD],
         )
@@ -1237,7 +1237,7 @@ class TestBarrierPresentValueAgainstBoyleTianTable8:
     # PDE_FD tolerance specifically to absorb the ~1% offset described
     # above against the paper's likely-biased reference value.
     _TOLS: dict[PricingMethod, dict[str, float]] = {
-        PricingMethod.BSM: dict(rtol=0.022, atol=1.0e-4),
+        PricingMethod.ANALYTICAL: dict(rtol=0.022, atol=1.0e-4),
         PricingMethod.BINOMIAL: dict(rtol=0.013, atol=1.0e-4),
         PricingMethod.PDE_FD: dict(rtol=0.002, atol=1.0e-4),
     }
@@ -1259,7 +1259,7 @@ class TestBarrierPresentValueAgainstBoyleTianTable8:
         underlying = self._paper_underlying()
 
         engine_pvs: dict[PricingMethod, float] = {}
-        for method in (PricingMethod.BSM, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        for method in (PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
             engine_pvs[method] = float(OptionValuation(underlying, spec, method).present_value())
 
         n_obs_str = "—" if monitoring_kind == "continuous" else str(monitoring_kind)
@@ -1268,7 +1268,7 @@ class TestBarrierPresentValueAgainstBoyleTianTable8:
             frequency,
             n_obs_str,
             paper_pv,
-            engine_pvs[PricingMethod.BSM],
+            engine_pvs[PricingMethod.ANALYTICAL],
             engine_pvs[PricingMethod.BINOMIAL],
             engine_pvs[PricingMethod.PDE_FD],
         )
@@ -1370,7 +1370,7 @@ class TestBarrierPresentValueAgainstBroadieGlasserman:
     # asymptotic correction, not a discrete solve) — should match the
     # paper's Corrected column to the printed 3-dp precision.
     _TOLS: dict[PricingMethod, dict[str, float]] = {
-        PricingMethod.BSM: dict(rtol=0.0, atol=1.5e-3),
+        PricingMethod.ANALYTICAL: dict(rtol=0.0, atol=1.5e-3),
         PricingMethod.BINOMIAL: dict(rtol=0.035, atol=1.0e-3),
         PricingMethod.PDE_FD: dict(rtol=0.004, atol=1.0e-3),
     }
@@ -1421,7 +1421,7 @@ class TestBarrierPresentValueAgainstBroadieGlasserman:
         corrected = self._BGK_CORRECTED[barrier]
 
         engine_pvs: dict[PricingMethod, float] = {}
-        for method in (PricingMethod.BSM, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        for method in (PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
             engine_pvs[method] = float(OptionValuation(underlying, spec, method).present_value())
 
         logger.info(
@@ -1430,13 +1430,13 @@ class TestBarrierPresentValueAgainstBroadieGlasserman:
             self._NUM_OBSERVATIONS,
             truth,
             corrected,
-            engine_pvs[PricingMethod.BSM],
+            engine_pvs[PricingMethod.ANALYTICAL],
             engine_pvs[PricingMethod.BINOMIAL],
             engine_pvs[PricingMethod.PDE_FD],
         )
 
         references: dict[PricingMethod, tuple[str, float]] = {
-            PricingMethod.BSM: ("Corrected", corrected),
+            PricingMethod.ANALYTICAL: ("Corrected", corrected),
             PricingMethod.BINOMIAL: ("True", truth),
             PricingMethod.PDE_FD: ("True", truth),
         }
@@ -1519,7 +1519,7 @@ class TestBarrierDeltaAgainstBroadieGlasserman:
     # BSM asserts against _BGK_CORRECTED — should match the paper's
     # Corrected column to the printed 3-dp precision at all 15 barriers.
     _TOLS: dict[PricingMethod, dict[str, float]] = {
-        PricingMethod.BSM: dict(rtol=0.0, atol=1.5e-3),
+        PricingMethod.ANALYTICAL: dict(rtol=0.0, atol=1.5e-3),
         PricingMethod.BINOMIAL: dict(rtol=0.025, atol=2.0e-3),
         PricingMethod.PDE_FD: dict(rtol=0.010, atol=2.0e-3),
     }
@@ -1570,7 +1570,7 @@ class TestBarrierDeltaAgainstBroadieGlasserman:
         corrected = self._BGK_CORRECTED[barrier]
 
         engine_deltas: dict[PricingMethod, float] = {}
-        for method in (PricingMethod.BSM, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        for method in (PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
             engine_deltas[method] = float(OptionValuation(underlying, spec, method).delta())
 
         logger.info(
@@ -1579,13 +1579,13 @@ class TestBarrierDeltaAgainstBroadieGlasserman:
             self._NUM_OBSERVATIONS,
             truth,
             corrected,
-            engine_deltas[PricingMethod.BSM],
+            engine_deltas[PricingMethod.ANALYTICAL],
             engine_deltas[PricingMethod.BINOMIAL],
             engine_deltas[PricingMethod.PDE_FD],
         )
 
         references: dict[PricingMethod, tuple[str, float]] = {
-            PricingMethod.BSM: ("Corrected", corrected),
+            PricingMethod.ANALYTICAL: ("Corrected", corrected),
             PricingMethod.BINOMIAL: ("True", truth),
             PricingMethod.PDE_FD: ("True", truth),
         }
@@ -1970,7 +1970,7 @@ class TestBarrierGreeks:
             action=BarrierAction.OUT,
             barrier=120.0,
         )
-        self.val = OptionValuation(self.underlying, self.spec, PricingMethod.BSM)
+        self.val = OptionValuation(self.underlying, self.spec, PricingMethod.ANALYTICAL)
 
     def test_delta_numerical(self):
         delta = self.val.delta()
@@ -2034,17 +2034,17 @@ class TestBarrierGreeksAgainstBoyleTianTable6:
     # Per-engine tolerances for each greek.
     _TOLS = {
         "delta": {
-            PricingMethod.BSM: dict(rtol=1.0e-2, atol=1.0e-2),
+            PricingMethod.ANALYTICAL: dict(rtol=1.0e-2, atol=1.0e-2),
             PricingMethod.BINOMIAL: dict(rtol=1.0e-2, atol=1.0e-2),
             PricingMethod.PDE_FD: dict(rtol=1.0e-2, atol=1.0e-2),
         },
         "gamma": {
-            PricingMethod.BSM: dict(rtol=1.5e-2, atol=5.0e-4),
+            PricingMethod.ANALYTICAL: dict(rtol=1.5e-2, atol=5.0e-4),
             PricingMethod.BINOMIAL: dict(rtol=1.5e-2, atol=5.0e-4),
             PricingMethod.PDE_FD: dict(rtol=1.5e-2, atol=5.0e-4),
         },
         "theta": {
-            PricingMethod.BSM: dict(rtol=2.0e-2, atol=3.0e-2),
+            PricingMethod.ANALYTICAL: dict(rtol=2.0e-2, atol=3.0e-2),
             PricingMethod.BINOMIAL: dict(rtol=2.0e-2, atol=3.0e-2),
             PricingMethod.PDE_FD: dict(rtol=2.0e-2, atol=3.0e-2),
         },
@@ -2104,7 +2104,7 @@ class TestBarrierGreeksAgainstBoyleTianTable6:
         paper_value = self._PAPER_GREEKS[spot][["delta", "gamma", "theta"].index(greek)]
 
         engine_values: dict[PricingMethod, float | None] = {}
-        for method in (PricingMethod.BSM, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        for method in (PricingMethod.ANALYTICAL, PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
             try:
                 with warnings.catch_warnings(record=True) as caught:
                     warnings.simplefilter("always", RuntimeWarning)
@@ -2130,7 +2130,7 @@ class TestBarrierGreeksAgainstBoyleTianTable6:
             spot,
             greek,
             paper_value,
-            _fmt(engine_values[PricingMethod.BSM]),
+            _fmt(engine_values[PricingMethod.ANALYTICAL]),
             _fmt(engine_values[PricingMethod.BINOMIAL]),
             _fmt(engine_values[PricingMethod.PDE_FD]),
         )
@@ -2484,7 +2484,7 @@ class TestBinomialBarrierStencilGuard:
 #     combos (these bypass the OV-level short-circuit since it only
 #     fires for NUMERICAL, mirroring delta/gamma).
 _TRIGGERED_DISPATCH = [
-    pytest.param(PricingMethod.BSM, GreekCalculationMethod.NUMERICAL, id="bsm_num"),
+    pytest.param(PricingMethod.ANALYTICAL, GreekCalculationMethod.NUMERICAL, id="bsm_num"),
     pytest.param(PricingMethod.BINOMIAL, GreekCalculationMethod.NUMERICAL, id="bin_num"),
     pytest.param(PricingMethod.BINOMIAL, GreekCalculationMethod.TREE, id="bin_tree"),
     pytest.param(PricingMethod.PDE_FD, GreekCalculationMethod.NUMERICAL, id="pde_num"),
@@ -2495,7 +2495,7 @@ _TRIGGERED_DISPATCH = [
 # dispatcher auto-resolves for that pricing-method + barrier spec
 # (see ``_resolve_params``).
 _TRIGGERED_KI_DISPATCH = [
-    pytest.param(PricingMethod.BSM, GreekCalculationMethod.NUMERICAL, None, id="bsm_num"),
+    pytest.param(PricingMethod.ANALYTICAL, GreekCalculationMethod.NUMERICAL, None, id="bsm_num"),
     pytest.param(
         PricingMethod.BINOMIAL,
         GreekCalculationMethod.NUMERICAL,
@@ -2528,13 +2528,13 @@ _TRIGGERED_KI_DISPATCH = [
 # triggered specs (see ``_reject_barrier_binomial_numerical``); rho is exempted
 # unconditionally via ``allow_barrier_binomial_numerical=True``.
 _TRIGGERED_NUMERICAL_DISPATCH = [
-    pytest.param(PricingMethod.BSM, GreekCalculationMethod.NUMERICAL, id="bsm_num"),
+    pytest.param(PricingMethod.ANALYTICAL, GreekCalculationMethod.NUMERICAL, id="bsm_num"),
     pytest.param(PricingMethod.BINOMIAL, GreekCalculationMethod.NUMERICAL, id="bin_num"),
     pytest.param(PricingMethod.PDE_FD, GreekCalculationMethod.NUMERICAL, id="pde_num"),
 ]
 
 _TRIGGERED_KI_NUMERICAL_DISPATCH = [
-    pytest.param(PricingMethod.BSM, GreekCalculationMethod.NUMERICAL, None, id="bsm_num"),
+    pytest.param(PricingMethod.ANALYTICAL, GreekCalculationMethod.NUMERICAL, None, id="bsm_num"),
     pytest.param(
         PricingMethod.BINOMIAL,
         GreekCalculationMethod.NUMERICAL,
@@ -3041,7 +3041,7 @@ class TestBarrierUnsupported:
     def test_american_exercise_not_supported(self):
         spec = _barrier_spec(exercise_type=ExerciseType.AMERICAN)
         with pytest.raises(UnsupportedFeatureError, match="AMERICAN"):
-            OptionValuation(_underlying(), spec, PricingMethod.BSM)
+            OptionValuation(_underlying(), spec, PricingMethod.ANALYTICAL)
 
     def test_discrete_dividends_rejected(self):
         divs = [(PRICING_DATE + dt.timedelta(days=90), 2.0)]
@@ -3053,7 +3053,7 @@ class TestBarrierUnsupported:
         )
         spec = _barrier_spec()
         with pytest.raises(UnsupportedFeatureError, match="discrete dividends"):
-            OptionValuation(u, spec, PricingMethod.BSM).present_value()
+            OptionValuation(u, spec, PricingMethod.ANALYTICAL).present_value()
 
 
 # ===========================================================================
@@ -3151,7 +3151,7 @@ class TestBarrierDiscreteBGvsMC:
             monitoring=BarrierMonitoring.DISCRETE,
             num_observations=num_observations,
         )
-        pv_bsm = OptionValuation(_underlying(), spec, PricingMethod.BSM).present_value()
+        pv_bsm = OptionValuation(_underlying(), spec, PricingMethod.ANALYTICAL).present_value()
 
         gbm = _mc_gbm(num_steps=max(200, num_observations * 10))
         pv_mc = OptionValuation(
@@ -3601,7 +3601,7 @@ class TestBarrierPDEAutoDomainHighVol:
             warnings.simplefilter("always")
             pde = OptionValuation(ud, spec, PricingMethod.PDE_FD).present_value()
         assert not [w for w in caught if "PDE" in str(w.message)]
-        closed_form = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+        closed_form = OptionValuation(ud, spec, PricingMethod.ANALYTICAL).present_value()
         assert np.isclose(pde, closed_form, rtol=5e-4)  # measured <= 6.3e-5
 
     @pytest.mark.parametrize("direction,barrier,option_type,action", _CASES)
@@ -3612,7 +3612,7 @@ class TestBarrierPDEAutoDomainHighVol:
         params = PDEParams.for_barriers(monitoring=BarrierMonitoring.CONTINUOUS, smax_mult=4.0)
         with pytest.warns(UserWarning, match="standard deviations of ln"):
             legacy = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
-        closed_form = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+        closed_form = OptionValuation(ud, spec, PricingMethod.ANALYTICAL).present_value()
         assert abs(legacy / closed_form - 1.0) > 1e-2  # the legacy truncation bias
 
 

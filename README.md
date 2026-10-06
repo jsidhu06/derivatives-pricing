@@ -107,7 +107,7 @@ spec = dp.VanillaSpec(
 val = dp.OptionValuation(
     underlying=underlying,
     spec=spec,
-    pricing_method=dp.PricingMethod.BSM,
+    pricing_method=dp.PricingMethod.ANALYTICAL,
 )
 print(f"{'PV:':<8} {val.present_value():>10.4f}")
 print(f"{'Delta:':<8} {val.delta():>10.4f}")

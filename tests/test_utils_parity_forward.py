@@ -131,13 +131,13 @@ def test_put_call_parity_bsm_no_dividend():
     call_price = OptionValuation(
         underlying=underlying_call,
         spec=call_spec,
-        pricing_method=PricingMethod.BSM,
+        pricing_method=PricingMethod.ANALYTICAL,
     ).present_value()
 
     put_price = OptionValuation(
         underlying=underlying_put,
         spec=put_spec,
-        pricing_method=PricingMethod.BSM,
+        pricing_method=PricingMethod.ANALYTICAL,
     ).present_value()
 
     rhs = put_call_parity_rhs(
@@ -193,13 +193,13 @@ def test_put_call_parity_bsm_with_dividend_curve():
     call_price = OptionValuation(
         underlying=underlying_call,
         spec=call_spec,
-        pricing_method=PricingMethod.BSM,
+        pricing_method=PricingMethod.ANALYTICAL,
     ).present_value()
 
     put_price = OptionValuation(
         underlying=underlying_put,
         spec=put_spec,
-        pricing_method=PricingMethod.BSM,
+        pricing_method=PricingMethod.ANALYTICAL,
     ).present_value()
 
     rhs = put_call_parity_rhs(

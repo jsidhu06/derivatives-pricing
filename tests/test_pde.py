@@ -158,7 +158,7 @@ class TestPDEGridTheta:
     @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
     def test_grid_theta_close_to_bsm(self, option_type: OptionType):
         spec_vanilla = spec(strike=100.0, option_type=option_type, exercise=ExerciseType.EUROPEAN)
-        bsm = OptionValuation(self.ud, spec_vanilla, PricingMethod.BSM)
+        bsm = OptionValuation(self.ud, spec_vanilla, PricingMethod.ANALYTICAL)
         pde = OptionValuation(self.ud, spec_vanilla, PricingMethod.PDE_FD, params=self.pde_params)
 
         theta_bsm = bsm.theta()

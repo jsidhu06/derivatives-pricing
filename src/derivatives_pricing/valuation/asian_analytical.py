@@ -252,7 +252,7 @@ class _AnalyticalAsianValuation:
     """Analytical Asian option valuation.
 
     Dispatched by OptionValuation when spec is AsianSpec and
-    pricing_method is BSM.
+    pricing_method is ANALYTICAL.
 
     - GEOMETRIC: Kemna-Vorst (1990) exact closed-form.
     - ARITHMETIC: Turnbull-Wakeman (1991) moment-matching approximation
@@ -266,7 +266,7 @@ class _AnalyticalAsianValuation:
         spec = self.spec
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
-                "Analytical (BSM) Asian pricing requires GEOMETRIC or ARITHMETIC averaging."
+                "ANALYTICAL Asian pricing requires GEOMETRIC or ARITHMETIC averaging."
             )
 
     def _observation_times_and_forwards(
