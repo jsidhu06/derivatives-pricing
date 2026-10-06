@@ -1077,7 +1077,7 @@ class TestAmericanAsianMC:
     # -- BSM American Asian raises --
 
     def test_bsm_american_asian_raises(self):
-        """BSM does not support American exercise for Asian options."""
+        """ANALYTICAL does not support American exercise for Asian options."""
         spec = _asian_spec(
             strike=self.STRIKE,
             maturity=self.maturity,
@@ -1090,11 +1090,11 @@ class TestAmericanAsianMC:
             discount_curve=flat_curve(PRICING_DATE, self.maturity, self.SHORT_RATE),
             maturity=self.maturity,
         )
-        with pytest.raises(ValidationError, match="AMERICAN.*BSM|BSM.*AMERICAN"):
+        with pytest.raises(ValidationError, match="AMERICAN.*ANALYTICAL|ANALYTICAL.*AMERICAN"):
             OptionValuation(
                 binom_underlying,
                 spec,
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             )
 
 
@@ -1334,7 +1334,7 @@ class TestSmallObservationCounts:
                 num_observations=2,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         vanilla_spec = VanillaSpec(
@@ -1347,7 +1347,7 @@ class TestSmallObservationCounts:
         bsm_pv = OptionValuation(
             und,
             vanilla_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert asian_pv < bsm_pv, f"M=2 Asian={asian_pv:.8f} should be < BSM={bsm_pv:.8f}"
@@ -1390,7 +1390,7 @@ class TestGeometricAsianPutCallParity:
                 num_observations=num_obs,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         put_pv = OptionValuation(
@@ -1402,7 +1402,7 @@ class TestGeometricAsianPutCallParity:
                 num_observations=num_obs,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # E[G] via the formula internals (M observations, N=M-1 intervals)
@@ -1461,7 +1461,7 @@ class TestAnalyticalVsMC:
                 num_observations=num_observations,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # MC geometric (same number of steps so observations match approximately)
@@ -1526,7 +1526,7 @@ class TestGeometricAsianProperties:
                 num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
         assert pv > 0.0
 
@@ -1549,7 +1549,7 @@ class TestGeometricAsianProperties:
                     num_observations=12,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             ).present_value()
             pvs.append(pv)
         assert pvs[0] < pvs[1] < pvs[2]
@@ -1573,7 +1573,7 @@ class TestGeometricAsianProperties:
                     num_observations=12,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             ).present_value()
             pvs.append(pv)
         assert pvs[0] > pvs[1] > pvs[2]
@@ -1602,7 +1602,7 @@ class TestGeometricAsianProperties:
                 num_observations=4,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
         pv_252 = OptionValuation(
             und,
@@ -1613,7 +1613,7 @@ class TestGeometricAsianProperties:
                 num_observations=252,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
         assert pv_252 > pv_4
 
@@ -1636,7 +1636,7 @@ class TestGeometricAsianProperties:
                 num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         vanilla_spec = VanillaSpec(
@@ -1649,7 +1649,7 @@ class TestGeometricAsianProperties:
         vanilla_pv = OptionValuation(
             und,
             vanilla_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert geom_pv < vanilla_pv
@@ -1673,7 +1673,7 @@ class TestGeometricAsianProperties:
                 num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         vanilla_spec = VanillaSpec(
@@ -1686,7 +1686,7 @@ class TestGeometricAsianProperties:
         vanilla_pv = OptionValuation(
             und,
             vanilla_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert geom_pv < vanilla_pv
@@ -1753,7 +1753,7 @@ class TestDividendYield:
                 num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         pv_with_q = OptionValuation(
@@ -1771,7 +1771,7 @@ class TestDividendYield:
                 num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert pv_with_q < pv_no_q
@@ -1896,7 +1896,7 @@ class TestSeasonedAsian:
         fresh_pv = OptionValuation(
             self._ud(),
             fresh_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # Library seasoned
@@ -1914,7 +1914,7 @@ class TestSeasonedAsian:
         seasoned_pv = OptionValuation(
             self._ud(),
             seasoned_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert np.isclose(seasoned_pv, scale * fresh_pv, rtol=1e-12)
@@ -1936,7 +1936,7 @@ class TestSeasonedAsian:
             OptionValuation(
                 self._ud(),
                 seasoned_spec,
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             ).present_value()
 
     # ── K* <= 0: certain exercise (call → forward, put → 0) ─────────────
@@ -1963,7 +1963,7 @@ class TestSeasonedAsian:
         pv = OptionValuation(
             self._ud(),
             seasoned_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # Must be strictly positive
@@ -1984,7 +1984,7 @@ class TestSeasonedAsian:
         disc_M1 = OptionValuation(
             self._ud(),
             zero_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
         scale = n2 / n_total
         expected = scale * (disc_M1 - K_star * df)
@@ -2006,7 +2006,7 @@ class TestSeasonedAsian:
         pv = OptionValuation(
             self._ud(),
             seasoned_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert pv == 0.0
@@ -2035,7 +2035,7 @@ class TestSeasonedAsian:
         fresh_pv = OptionValuation(
             self._ud(),
             fresh_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         seasoned_spec = AsianSpec(
@@ -2052,7 +2052,7 @@ class TestSeasonedAsian:
         seasoned_pv = OptionValuation(
             self._ud(),
             seasoned_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert seasoned_pv < fresh_pv
@@ -2077,7 +2077,7 @@ class TestSeasonedAsian:
             return OptionValuation(
                 self._ud(),
                 spec,
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             ).present_value()
 
         assert _seasoned_call(55.0) > _seasoned_call(50.0) > _seasoned_call(45.0)
@@ -2102,7 +2102,7 @@ class TestSeasonedAsian:
             return OptionValuation(
                 self._ud(),
                 spec,
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             ).present_value()
 
         assert _seasoned_put(45.0) > _seasoned_put(50.0) > _seasoned_put(55.0)
@@ -2127,7 +2127,7 @@ class TestSeasonedAsian:
             return OptionValuation(
                 self._ud(),
                 spec,
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             ).present_value()
 
         # More past ATM observations → the average is "pinned" closer to K
@@ -2155,7 +2155,7 @@ class TestSeasonedAsian:
         bsm_pv = OptionValuation(
             self._ud(),
             seasoned_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         binom_pv = OptionValuation(
@@ -2189,7 +2189,7 @@ class TestSeasonedAsian:
         bsm_pv = OptionValuation(
             self._ud(),
             seasoned_spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         gbm = _gbm_underlying(
@@ -2225,7 +2225,7 @@ class TestSeasonedAsian:
                 num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         pv_with_q = OptionValuation(
@@ -2243,7 +2243,7 @@ class TestSeasonedAsian:
                 num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert pv_with_q > pv_no_q
@@ -2352,7 +2352,7 @@ class TestSeasonedBinomialVsMC:
         bsm_pv = OptionValuation(
             self._ud(),
             spec,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         binom_pv = OptionValuation(
@@ -2464,7 +2464,7 @@ class TestValidation:
                 num_observations=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
         assert pv > 0.0
 
@@ -2486,7 +2486,7 @@ class TestValidation:
                     num_observations=None,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             )
 
     def test_invalid_num_observations_on_spec(self):
@@ -2562,7 +2562,7 @@ class TestAveragingStart:
                 num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         pv_late = OptionValuation(
@@ -2575,7 +2575,7 @@ class TestAveragingStart:
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # Shorter averaging window → less variance reduction → more expensive call
@@ -2602,7 +2602,7 @@ class TestAveragingStart:
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         put_pv = OptionValuation(
@@ -2615,7 +2615,7 @@ class TestAveragingStart:
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # Compute E[G] (M observations, N=M-1 intervals)
@@ -2689,7 +2689,7 @@ def test_geometric_asian_four_method_comparison(
             num_observations=NUM_OBSERVATIONS,
             averaging=AsianAveraging.GEOMETRIC,
         ),
-        PricingMethod.BSM,
+        PricingMethod.ANALYTICAL,
     ).present_value()
 
     # --- 2. Binomial MC ---
@@ -2915,7 +2915,7 @@ class TestArithmeticPutCallParity:
                 num_observations=num_observations,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         put_pv = OptionValuation(
@@ -2927,7 +2927,7 @@ class TestArithmeticPutCallParity:
                 num_observations=num_observations,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # E[S_avg] = M₁ via forward prices
@@ -2985,7 +2985,7 @@ class TestArithmeticVsMC:
                 num_observations=num_observations,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         # MC arithmetic
@@ -3051,7 +3051,7 @@ class TestArithmeticProperties:
                 num_observations=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         geom_pv = OptionValuation(
@@ -3063,7 +3063,7 @@ class TestArithmeticProperties:
                 num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert arith_pv >= geom_pv - 1e-10, f"arith call={arith_pv:.6f} < geom call={geom_pv:.6f}"
@@ -3087,7 +3087,7 @@ class TestArithmeticProperties:
                 num_observations=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         geom_pv = OptionValuation(
@@ -3099,7 +3099,7 @@ class TestArithmeticProperties:
                 num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert arith_pv <= geom_pv + 1e-10, f"arith put={arith_pv:.6f} > geom put={geom_pv:.6f}"
@@ -3123,7 +3123,7 @@ class TestArithmeticProperties:
                 num_observations=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         vanilla_pv = OptionValuation(
@@ -3135,7 +3135,7 @@ class TestArithmeticProperties:
                 maturity=maturity,
                 currency=CURRENCY,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert arith_pv < vanilla_pv
@@ -3158,7 +3158,7 @@ class TestArithmeticProperties:
                     num_observations=12,
                     averaging=AsianAveraging.ARITHMETIC,
                 ),
-                PricingMethod.BSM,
+                PricingMethod.ANALYTICAL,
             ).present_value()
             assert pv > 0.0
 
@@ -3178,7 +3178,7 @@ class TestArithmeticProperties:
                 num_observations=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         pv_with_q = OptionValuation(
@@ -3196,7 +3196,7 @@ class TestArithmeticProperties:
                 num_observations=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
         ).present_value()
 
         assert pv_with_q < pv_no_q

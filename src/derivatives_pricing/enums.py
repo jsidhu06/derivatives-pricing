@@ -42,12 +42,25 @@ class ExerciseType(Enum):
 
 
 class PricingMethod(Enum):
-    """Numerical method used by ``OptionValuation`` to price an option."""
+    """Numerical method used by ``OptionValuation`` to price an option.
 
-    BSM = "bsm"
+    ``ANALYTICAL`` is closed-form pricing under GBM dynamics:
+    Black-Scholes-Merton for vanillas, Reiner-Rubinstein (with the
+    Broadie-Glasserman-Kou discrete correction) for barriers, and
+    Kemna-Vorst / Turnbull-Wakeman for Asians.
+    """
+
+    ANALYTICAL = "analytical"
     BINOMIAL = "binomial"
     PDE_FD = "pde_fd"
     MONTE_CARLO = "monte_carlo"
+    # Deprecated alias of ANALYTICAL (the pre-0.3 name).
+    BSM = "analytical"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "PricingMethod | None":
+        # Accept the pre-0.3 value "bsm" for ANALYTICAL.
+        return cls.ANALYTICAL if value == "bsm" else None
 
 
 class GreekCalculationMethod(Enum):

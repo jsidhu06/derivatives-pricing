@@ -67,7 +67,7 @@ def test_control_variate_binomial_matches_adjustment():
         ud, euro_spec, PricingMethod.BINOMIAL, params=base_params
     ).present_value()
 
-    european_bsm = OptionValuation(ud, euro_spec, PricingMethod.BSM).present_value()
+    european_bsm = OptionValuation(ud, euro_spec, PricingMethod.ANALYTICAL).present_value()
 
     american_cv = OptionValuation(
         ud, amer_spec, PricingMethod.BINOMIAL, params=cv_params
@@ -93,7 +93,7 @@ def test_control_variate_pde_matches_adjustment():
         ud, euro_spec, PricingMethod.PDE_FD, params=base_params
     ).present_value()
 
-    european_bsm = OptionValuation(ud, euro_spec, PricingMethod.BSM).present_value()
+    european_bsm = OptionValuation(ud, euro_spec, PricingMethod.ANALYTICAL).present_value()
 
     american_cv = OptionValuation(
         ud, amer_spec, PricingMethod.PDE_FD, params=cv_params
@@ -181,7 +181,9 @@ class TestAsianControlVariate:
             num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
-        european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
+        european_analytical = OptionValuation(
+            ud, bsm_spec, PricingMethod.ANALYTICAL
+        ).present_value()
 
         # CV-adjusted
         american_cv = OptionValuation(
@@ -234,7 +236,9 @@ class TestAsianControlVariate:
                 num_observations=ASIAN_OBSERVATIONS,
                 exercise_type=ExerciseType.EUROPEAN,
             )
-            european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
+            european_analytical = OptionValuation(
+                ud, bsm_spec, PricingMethod.ANALYTICAL
+            ).present_value()
 
             assert american_cv >= european_analytical - 1e-8, (
                 f"{option_type.value} K={strike}: "
@@ -290,7 +294,7 @@ class TestAsianControlVariate:
             num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
-        euro_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
+        euro_analytical = OptionValuation(ud, bsm_spec, PricingMethod.ANALYTICAL).present_value()
 
         # Hull tree bias
         hull_bias = abs(euro_hull - euro_analytical) / euro_analytical
@@ -351,7 +355,9 @@ class TestAsianControlVariate:
             num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
-        european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
+        european_analytical = OptionValuation(
+            ud, bsm_spec, PricingMethod.ANALYTICAL
+        ).present_value()
 
         # CV-adjusted
         american_cv = OptionValuation(

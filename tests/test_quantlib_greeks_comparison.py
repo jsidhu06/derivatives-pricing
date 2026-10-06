@@ -417,7 +417,7 @@ def _resolve_curve(
     "engine,tols",
     [
         (
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
             {"delta": 1e-4, "gamma": 1e-4, "vega": 1e-4, "theta": 1e-4, "rho": 1e-4},
         ),
         (
@@ -762,7 +762,7 @@ def _dp_asian_analytical_greeks(
         fixing_dates=_ASIAN_FIXINGS,
         exercise_type=ExerciseType.EUROPEAN,
     )
-    ov = OptionValuation(underlying, spec, PricingMethod.BSM)
+    ov = OptionValuation(underlying, spec, PricingMethod.ANALYTICAL)
     return {
         "npv": ov.present_value(),
         "delta": ov.delta(),
@@ -1185,7 +1185,7 @@ def test_european_barrier_greeks_vs_quantlib(
 
     if is_flat:
         dp_an = _dp_barrier_greeks(
-            pricing_method=PricingMethod.BSM,
+            pricing_method=PricingMethod.ANALYTICAL,
             exercise_type=ExerciseType.EUROPEAN,
             direction=direction,
             action=action,

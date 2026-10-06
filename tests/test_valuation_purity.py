@@ -108,7 +108,7 @@ class TestValuationPurityPresentValue:
         baseline = _snapshot_ud(ud)
 
         # BSM pricing
-        bsm = OptionValuation(ud, spec, PricingMethod.BSM)
+        bsm = OptionValuation(ud, spec, PricingMethod.ANALYTICAL)
         _ = bsm.present_value()
         assert _snapshot_ud(ud) == baseline, "present_value() (BSM) mutated UnderlyingData"
 
@@ -126,7 +126,7 @@ class TestValuationPurityGreeks:
 
         ud = _make_ud(spot=100.0, vol=0.20, pricing_date=pricing_date, discount_curve=csr)
         spec = _make_spec(option_type=OptionType.CALL, strike=100.0, maturity=maturity)
-        val = OptionValuation(ud, spec, PricingMethod.BSM)
+        val = OptionValuation(ud, spec, PricingMethod.ANALYTICAL)
 
         baseline = _snapshot_ud(ud)
         _ = val.delta()  # may bump internally
@@ -137,7 +137,7 @@ class TestValuationPurityGreeks:
 
         ud = _make_ud(spot=100.0, vol=0.20, pricing_date=pricing_date, discount_curve=csr)
         spec = _make_spec(option_type=OptionType.CALL, strike=100.0, maturity=maturity)
-        val = OptionValuation(ud, spec, PricingMethod.BSM)
+        val = OptionValuation(ud, spec, PricingMethod.ANALYTICAL)
 
         baseline = _snapshot_ud(ud)
         _ = val.gamma()  # may bump internally
@@ -148,7 +148,7 @@ class TestValuationPurityGreeks:
 
         ud = _make_ud(spot=100.0, vol=0.20, pricing_date=pricing_date, discount_curve=csr)
         spec = _make_spec(option_type=OptionType.CALL, strike=100.0, maturity=maturity)
-        val = OptionValuation(ud, spec, PricingMethod.BSM)
+        val = OptionValuation(ud, spec, PricingMethod.ANALYTICAL)
 
         baseline = _snapshot_ud(ud)
         _ = val.vega()  # may bump internally

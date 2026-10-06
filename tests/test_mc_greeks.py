@@ -125,7 +125,7 @@ class _MCGreekTestBase:
             strike=strike or self.strike,
             maturity=self.maturity,
         )
-        return OptionValuation(ud, spec, PricingMethod.BSM)
+        return OptionValuation(ud, spec, PricingMethod.ANALYTICAL)
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +385,7 @@ class TestMCGreekNoDividend(_MCGreekTestBase):
             volatility=self.vol,
             market_data=self.market_data,
         )
-        bsm = OptionValuation(bsm_ud, spec, PricingMethod.BSM)
+        bsm = OptionValuation(bsm_ud, spec, PricingMethod.ANALYTICAL)
         pw_delta = mc.delta(greek_calc_method=GreekCalculationMethod.PATHWISE)
         bsm_delta = bsm.delta()
         assert np.isclose(pw_delta, bsm_delta, rtol=0.01)

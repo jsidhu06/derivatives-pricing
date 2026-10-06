@@ -77,7 +77,7 @@ def _build_valuation(
     return OptionValuation(
         underlying=underlying_data,
         spec=spec,
-        pricing_method=PricingMethod.BSM,
+        pricing_method=PricingMethod.ANALYTICAL,
     )
 
 
@@ -122,7 +122,7 @@ def _build_discrete_dividend_valuation(
     return OptionValuation(
         underlying=underlying_data,
         spec=spec,
-        pricing_method=PricingMethod.BSM,
+        pricing_method=PricingMethod.ANALYTICAL,
     )
 
 
@@ -520,7 +520,7 @@ def test_implied_volatility_rejects_barrier_spec():
     valuation = OptionValuation(
         underlying=underlying_data,
         spec=barrier_spec,
-        pricing_method=PricingMethod.BSM,
+        pricing_method=PricingMethod.ANALYTICAL,
     )
     target_price = valuation.present_value()
 

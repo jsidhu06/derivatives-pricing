@@ -410,7 +410,7 @@ def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
     gbm = _gbm(spot=spot, dividend_curve=q_curve, dcc=dcc)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
-    bsm_pv = _dp_price(ud, spec, PricingMethod.BSM)
+    bsm_pv = _dp_price(ud, spec, PricingMethod.ANALYTICAL)
     pde_pv = _dp_price(ud, spec, PricingMethod.PDE_FD, _ME_PDE)
     binom_pv = _dp_price(ud, spec, PricingMethod.BINOMIAL, _ME_BINOM)
     mc_pv = _dp_price(gbm, spec, PricingMethod.MONTE_CARLO, _ME_MC_EU)
@@ -528,7 +528,7 @@ def test_discrete_div_european_vs_quantlib(r_curve):
 
     pde_pv = _dp_price(ud, spec, PricingMethod.PDE_FD, _ME_PDE)
     mc_pv = _dp_price(gbm, spec, PricingMethod.MONTE_CARLO, _ME_MC_EU)
-    bsm_pv = _dp_price(ud, spec, PricingMethod.BSM)
+    bsm_pv = _dp_price(ud, spec, PricingMethod.ANALYTICAL)
     binom_pv = _dp_price(ud, spec, PricingMethod.BINOMIAL, _ME_BINOM)
 
     # Vol-adjusted BSM/Binomial cross-check
@@ -540,7 +540,7 @@ def test_discrete_div_european_vs_quantlib(r_curve):
     )
     vol_multiplier = ud.initial_value / (ud.initial_value - pv_divs)
     adjusted_ud = ud.replace(volatility=ud.volatility * vol_multiplier)
-    bsm_adj = _dp_price(adjusted_ud, spec, PricingMethod.BSM)
+    bsm_adj = _dp_price(adjusted_ud, spec, PricingMethod.ANALYTICAL)
     binom_adj = _dp_price(adjusted_ud, spec, PricingMethod.BINOMIAL, _ME_BINOM)
 
     # QuantLib FD European with discrete dividends
@@ -742,7 +742,7 @@ def _bsm_european(
         discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
-    return OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+    return OptionValuation(ud, spec, PricingMethod.ANALYTICAL).present_value()
 
 
 def _binomial_european(
@@ -952,7 +952,7 @@ def test_european_forward_curves_vs_quantlib(
     gbm = _gbm(spot=spot, r_curve=r_curve, dividend_curve=q_curve, paths=150_000)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
-    bsm_pv = _dp_price(ud, spec, PricingMethod.BSM)
+    bsm_pv = _dp_price(ud, spec, PricingMethod.ANALYTICAL)
     pde_pv = _dp_price(ud, spec, PricingMethod.PDE_FD, _ME_PDE)
     binom_pv = _dp_price(ud, spec, PricingMethod.BINOMIAL, _ME_BINOM)
     mc_pv = _dp_price(gbm, spec, PricingMethod.MONTE_CARLO, _ME_MC_EU)
@@ -1210,7 +1210,7 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
     dp_analytical = OptionValuation(
-        as_underlying_data(gbm), spec, PricingMethod.BSM
+        as_underlying_data(gbm), spec, PricingMethod.ANALYTICAL
     ).present_value()
 
     logger.info(
@@ -1264,7 +1264,7 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
     dp_analytical = OptionValuation(
-        as_underlying_data(gbm), spec, PricingMethod.BSM
+        as_underlying_data(gbm), spec, PricingMethod.ANALYTICAL
     ).present_value()
 
     logger.info(
@@ -1338,7 +1338,7 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
     dp_analytical = OptionValuation(
-        as_underlying_data(gbm), spec, PricingMethod.BSM
+        as_underlying_data(gbm), spec, PricingMethod.ANALYTICAL
     ).present_value()
 
     logger.info(
@@ -1399,7 +1399,7 @@ def test_asian_geometric_put_nonflat_curves_vs_quantlib():
         params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
     ).present_value()
     dp_analytical = OptionValuation(
-        as_underlying_data(gbm), spec, PricingMethod.BSM
+        as_underlying_data(gbm), spec, PricingMethod.ANALYTICAL
     ).present_value()
 
     logger.info(
@@ -1605,7 +1605,7 @@ def _dp_barrier_analytical_price(
         rebate=rebate,
         rebate_timing=rebate_timing,
     )
-    return _dp_price(ud, spec, PricingMethod.BSM)
+    return _dp_price(ud, spec, PricingMethod.ANALYTICAL)
 
 
 _BARRIER_BINOM_CFG = BinomialParams(num_steps=1000)

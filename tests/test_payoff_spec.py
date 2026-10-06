@@ -810,8 +810,10 @@ class TestPayoffSpecRejection:
     def test_bsm_rejects_payoff_spec(self):
         """BSM requires CALL/PUT option_type, unavailable for PayoffSpec."""
         spec = _payoff_spec(_bull_call_spread)
-        with pytest.raises(UnsupportedFeatureError, match="BSM"):
-            OptionValuation(_ud(), spec, PricingMethod.BSM)
+        with pytest.raises(
+            UnsupportedFeatureError, match="ANALYTICAL pricing requires a CALL or PUT"
+        ):
+            OptionValuation(_ud(), spec, PricingMethod.ANALYTICAL)
 
     def test_mc_pathwise_rejects_payoff_spec(self):
         """MC pathwise/LR greeks require VanillaSpec."""

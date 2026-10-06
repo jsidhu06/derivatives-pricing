@@ -90,7 +90,7 @@ def test_discrete_dividend_engine_consistency():
     assert np.isclose(mc_pv, pde_pv, rtol=0.01)
 
     # Binomial vs BSM (prepaid-forward adjustment)
-    bsm_pv = OptionValuation(ud, sp, PricingMethod.BSM).present_value()
+    bsm_pv = OptionValuation(ud, sp, PricingMethod.ANALYTICAL).present_value()
     binom_pv = OptionValuation(
         ud, sp, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1500)
     ).present_value()
@@ -107,7 +107,7 @@ def test_discrete_dividend_engine_consistency():
     vol_multiplier = ud.initial_value / (ud.initial_value - pv_divs)
     adjusted_ud = ud.replace(volatility=ud.volatility * vol_multiplier)
 
-    bsm_adj = OptionValuation(adjusted_ud, sp, PricingMethod.BSM).present_value()
+    bsm_adj = OptionValuation(adjusted_ud, sp, PricingMethod.ANALYTICAL).present_value()
     binom_adj = OptionValuation(
         adjusted_ud, sp, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1500)
     ).present_value()

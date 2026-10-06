@@ -185,7 +185,7 @@ class TestOptionValuation:
         valuation = OptionValuation(
             underlying=ud,
             spec=self.call_spec,
-            pricing_method=PricingMethod.BSM,
+            pricing_method=PricingMethod.ANALYTICAL,
         )
         assert valuation.strike == self.strike
         assert isinstance(valuation._impl, _BSMEuropeanValuation)
@@ -221,7 +221,7 @@ class TestOptionValuation:
         valuation = OptionValuation(
             underlying=ud,
             spec=self.call_spec,
-            pricing_method=PricingMethod.BSM,
+            pricing_method=PricingMethod.ANALYTICAL,
         )
         assert valuation.present_value() > 0.0
 
@@ -312,7 +312,7 @@ class TestOptionValuation:
             OptionValuation(
                 underlying=ud,
                 spec=invalid_spec,
-                pricing_method=PricingMethod.BSM,
+                pricing_method=PricingMethod.ANALYTICAL,
             )
 
     def test_option_valuation_currency_mismatch(self):
@@ -337,7 +337,7 @@ class TestOptionValuation:
             OptionValuation(
                 underlying=ud,
                 spec=eur_spec,
-                pricing_method=PricingMethod.BSM,
+                pricing_method=PricingMethod.ANALYTICAL,
             )
 
     def test_custom_payoff_single_contract_american_supported(self):
@@ -449,7 +449,7 @@ class TestOptionValuation:
             OptionValuation(
                 underlying=ud,
                 spec=bogus_spec,
-                pricing_method=PricingMethod.BSM,
+                pricing_method=PricingMethod.ANALYTICAL,
             )
 
     def test_optionspec_alias_isinstance(self):
@@ -521,12 +521,12 @@ class TestOptionValuation:
         )
 
         with pytest.raises(
-            ConfigurationError, match=r"BSM pricing requires an UnderlyingData instance.*"
+            ConfigurationError, match=r"ANALYTICAL pricing requires an UnderlyingData instance.*"
         ):
             OptionValuation(
                 underlying=process,
                 spec=self.call_spec,
-                pricing_method=PricingMethod.BSM,
+                pricing_method=PricingMethod.ANALYTICAL,
             )
 
     def test_option_valuation_pde_rejects_path_simulation(self):
@@ -566,11 +566,13 @@ class TestOptionValuation:
         )
 
         # Error is raised during initialization, not present_value
-        with pytest.raises(UnsupportedFeatureError, match="BSM is only applicable to European"):
+        with pytest.raises(
+            UnsupportedFeatureError, match="ANALYTICAL is only applicable to European"
+        ):
             OptionValuation(
                 underlying=ud,
                 spec=american_spec,
-                pricing_method=PricingMethod.BSM,
+                pricing_method=PricingMethod.ANALYTICAL,
             )
 
     def test_dispatcher_creates_fd_impl_for_american(self):
@@ -720,7 +722,7 @@ class TestOptionValuation:
         )
         fd_pv = fd_val.present_value()
 
-        bsm_val = OptionValuation(ud, spec_eu, PricingMethod.BSM)
+        bsm_val = OptionValuation(ud, spec_eu, PricingMethod.ANALYTICAL)
         bsm_pv = bsm_val.present_value()
 
         # American call with no dividends should be near European (no early exercise benefit).
@@ -755,7 +757,7 @@ class TestOptionValuation:
             PricingMethod.BINOMIAL,
             params=BinomialParams(num_steps=1200),
         )
-        bsm_val = OptionValuation(ud, spec, PricingMethod.BSM)
+        bsm_val = OptionValuation(ud, spec, PricingMethod.ANALYTICAL)
 
         binom_pv = binom_val.present_value()
         bsm_pv = bsm_val.present_value()
@@ -782,7 +784,7 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        bsm = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+        bsm = OptionValuation(ud, spec, PricingMethod.ANALYTICAL).present_value()
         binom = OptionValuation(
             ud,
             spec,
@@ -989,7 +991,7 @@ class TestCrossMethodGridAndParamCombos:
             currency=self.currency,
         )
 
-        pv_bsm = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+        pv_bsm = OptionValuation(ud, spec, PricingMethod.ANALYTICAL).present_value()
         pv_binom = OptionValuation(
             ud,
             spec,
@@ -1147,7 +1149,7 @@ class TestDayCountConventionMonotonicity:
     @pytest.mark.parametrize(
         "exercise_type,method,params",
         [
-            (ExerciseType.EUROPEAN, PricingMethod.BSM, None),
+            (ExerciseType.EUROPEAN, PricingMethod.ANALYTICAL, None),
             (
                 ExerciseType.EUROPEAN,
                 PricingMethod.PDE_FD,
@@ -1242,3 +1244,27 @@ class TestAsUnderlyingData:
         )
         with pytest.raises(ConfigurationError, match="GBMProcess"):
             as_underlying_data(srd)
+
+
+class TestPricingMethodBsmAlias:
+    """PricingMethod.BSM is the deprecated alias of ANALYTICAL (pre-0.3 name)."""
+
+    def test_attribute_alias_is_the_same_member(self):
+        assert PricingMethod.BSM is PricingMethod.ANALYTICAL
+        assert PricingMethod.BSM.name == "ANALYTICAL"
+
+    def test_legacy_value_resolves(self):
+        assert PricingMethod("bsm") is PricingMethod.ANALYTICAL
+        assert PricingMethod("analytical") is PricingMethod.ANALYTICAL
+
+    def test_alias_is_not_a_separate_member(self):
+        assert list(PricingMethod) == [
+            PricingMethod.ANALYTICAL,
+            PricingMethod.BINOMIAL,
+            PricingMethod.PDE_FD,
+            PricingMethod.MONTE_CARLO,
+        ]
+
+    def test_unknown_value_still_raises(self):
+        with pytest.raises(ValueError):
+            PricingMethod("black_scholes")

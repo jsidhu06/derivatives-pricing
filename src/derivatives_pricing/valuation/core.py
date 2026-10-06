@@ -9,7 +9,7 @@ This module is the central orchestration layer for pricing:
 
 Design notes
 ------------
-- Deterministic methods (`BSM`, `BINOMIAL`, `PDE_FD`) operate on
+- Deterministic methods (`ANALYTICAL`, `BINOMIAL`, `PDE_FD`) operate on
     `UnderlyingData`.
 - Monte Carlo methods operate on `PathSimulation` instances.
 - Greeks default to engine-native methods when available, otherwise
@@ -75,7 +75,7 @@ _VANILLA_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
     (PricingMethod.MONTE_CARLO, ExerciseType.AMERICAN): _MCAmericanValuation,
     (PricingMethod.BINOMIAL, ExerciseType.EUROPEAN): _BinomialEuropeanValuation,
     (PricingMethod.BINOMIAL, ExerciseType.AMERICAN): _BinomialAmericanValuation,
-    (PricingMethod.BSM, ExerciseType.EUROPEAN): _BSMEuropeanValuation,
+    (PricingMethod.ANALYTICAL, ExerciseType.EUROPEAN): _BSMEuropeanValuation,
     (PricingMethod.PDE_FD, ExerciseType.EUROPEAN): _FDEuropeanValuation,
     (PricingMethod.PDE_FD, ExerciseType.AMERICAN): _FDAmericanValuation,
 }
@@ -86,12 +86,12 @@ _ASIAN_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
     (PricingMethod.MONTE_CARLO, ExerciseType.AMERICAN): _MCAsianAmericanValuation,
     (PricingMethod.BINOMIAL, ExerciseType.EUROPEAN): _BinomialAsianValuation,
     (PricingMethod.BINOMIAL, ExerciseType.AMERICAN): _BinomialAsianValuation,
-    (PricingMethod.BSM, ExerciseType.EUROPEAN): _AnalyticalAsianValuation,
+    (PricingMethod.ANALYTICAL, ExerciseType.EUROPEAN): _AnalyticalAsianValuation,
 }
 
 # Maps (PricingMethod, ExerciseType) → implementation class for barrier option specs.
 _BARRIER_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
-    (PricingMethod.BSM, ExerciseType.EUROPEAN): _AnalyticalBarrierValuation,
+    (PricingMethod.ANALYTICAL, ExerciseType.EUROPEAN): _AnalyticalBarrierValuation,
     (PricingMethod.MONTE_CARLO, ExerciseType.EUROPEAN): _MCBarrierEuropeanValuation,
     (PricingMethod.MONTE_CARLO, ExerciseType.AMERICAN): _MCBarrierAmericanValuation,
     (PricingMethod.BINOMIAL, ExerciseType.EUROPEAN): _BinomialBarrierValuation,
@@ -104,9 +104,9 @@ _BARRIER_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
 # human-readable str of supported greeks for that capability).
 _GREEK_METHOD_RULES: dict[GreekCalculationMethod, tuple[PricingMethod, str, str]] = {
     GreekCalculationMethod.ANALYTICAL: (
-        PricingMethod.BSM,
-        "bsm_capable",  # always True for BSM — not a caller flag
-        "all BSM greeks",
+        PricingMethod.ANALYTICAL,
+        "bsm_capable",  # always True for ANALYTICAL — not a caller flag
+        "all greeks",
     ),
     GreekCalculationMethod.TREE: (
         PricingMethod.BINOMIAL,
@@ -240,7 +240,7 @@ def as_underlying_data(process: GBMProcess | UnderlyingData) -> UnderlyingData:
 
     If *process* is already an ``UnderlyingData``, it is returned unchanged.
     This is useful when you have a Monte-Carlo process but need to run a
-    deterministic method (BSM, binomial, PDE) that requires ``UnderlyingData``.
+    deterministic method (ANALYTICAL, BINOMIAL, PDE_FD) that requires ``UnderlyingData``.
 
     Only ``GBMProcess`` is accepted — converting jump-diffusion or
     mean-reverting processes would silently discard non-GBM parameters.
@@ -346,7 +346,7 @@ class OptionValuation:
             )
 
         # Strategy guardrails
-        if pricing_method is PricingMethod.BSM and self._option_type not in (
+        if pricing_method is PricingMethod.ANALYTICAL and self._option_type not in (
             OptionType.CALL,
             OptionType.PUT,
         ):
@@ -370,7 +370,7 @@ class OptionValuation:
         # Validate that deterministic methods receive UnderlyingData
         if pricing_method in (
             PricingMethod.BINOMIAL,
-            PricingMethod.BSM,
+            PricingMethod.ANALYTICAL,
             PricingMethod.PDE_FD,
         ) and not isinstance(underlying, UnderlyingData):
             raise ConfigurationError(
@@ -744,7 +744,7 @@ class OptionValuation:
         if (
             greek_calc_method is None
             and time_bump_days is None
-            and self._pricing_method is PricingMethod.BSM
+            and self._pricing_method is PricingMethod.ANALYTICAL
             and isinstance(self._spec, BarrierSpec)
             and not self._barrier_triggered_at_inception()
         ):
@@ -824,7 +824,7 @@ class OptionValuation:
         Parameters
         ----------
         greek_calc_method
-            Greek computation method. Analytical rho is used for BSM by default;
+            Greek computation method. Analytical rho is used for ANALYTICAL by default;
             otherwise finite-difference bump-and-revalue is used.
         rate_bump
             Absolute parallel bump in the continuously-compounded risk-free
@@ -1010,9 +1010,9 @@ class OptionValuation:
 
         impl_cls = _VANILLA_REGISTRY.get((self._pricing_method, spec.exercise_type))
         if impl_cls is None:
-            if self._pricing_method is PricingMethod.BSM:
+            if self._pricing_method is PricingMethod.ANALYTICAL:
                 raise UnsupportedFeatureError(
-                    "BSM is only applicable to European option valuation. "
+                    "ANALYTICAL is only applicable to European option valuation. "
                     "Select a different pricing method for American options such as Binomial, "
                     "PDE_FD or MONTE_CARLO."
                 )
@@ -1269,7 +1269,7 @@ class OptionValuation:
         euro_bsm = OptionValuation(
             underlying=bsm_underlying,
             spec=euro_spec,
-            pricing_method=PricingMethod.BSM,
+            pricing_method=PricingMethod.ANALYTICAL,
         ).present_value()
 
         return base_pv + (euro_bsm - euro_num)
@@ -1325,7 +1325,7 @@ class OptionValuation:
         euro_analytical = OptionValuation(
             underlying=bsm_underlying,
             spec=euro_spec,
-            pricing_method=PricingMethod.BSM,
+            pricing_method=PricingMethod.ANALYTICAL,
         ).present_value()
 
         logger.debug(
@@ -1597,7 +1597,9 @@ class OptionValuation:
         # Asian options: no engine-native Greeks implemented — always bump-and-revalue.
         if isinstance(self._spec, AsianSpec):
             return GreekCalculationMethod.NUMERICAL
-        if self._pricing_method is PricingMethod.BSM and not isinstance(self._spec, BarrierSpec):
+        if self._pricing_method is PricingMethod.ANALYTICAL and not isinstance(
+            self._spec, BarrierSpec
+        ):
             # Analytical Greeks not available for barriers
             return GreekCalculationMethod.ANALYTICAL
         if tree_capable and self._pricing_method is PricingMethod.BINOMIAL:
