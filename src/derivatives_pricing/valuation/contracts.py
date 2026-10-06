@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import datetime as dt
 
 import numpy as np
+import pandas as pd
 
 from ..enums import (
     AsianAveraging,
@@ -527,3 +528,55 @@ class BarrierSpec:
 # Usable both as an annotation (``spec: OptionSpec``) and at runtime
 # (``isinstance(x, OptionSpec)``)
 OptionSpec = VanillaSpec | PayoffSpec | AsianSpec | BarrierSpec
+
+
+def _asian_fixing_schedule(spec: AsianSpec, pricing_date: dt.datetime) -> tuple[dt.datetime, ...]:
+    """Contractual Asian fixing dates: explicit, or ``num_observations`` evenly spaced."""
+    if spec.fixing_dates is not None:
+        return tuple(spec.fixing_dates)
+    assert spec.num_observations is not None
+    averaging_start = spec.averaging_start or pricing_date
+    return tuple(
+        pd.date_range(
+            start=averaging_start,
+            end=spec.maturity,
+            periods=spec.num_observations,
+        ).to_pydatetime()
+    )
+
+
+def _barrier_monitoring_schedule(
+    spec: BarrierSpec, pricing_date: dt.datetime
+) -> tuple[dt.datetime, ...] | None:
+    """Barrier monitoring dates; ``None`` for continuous monitoring."""
+    if spec.monitoring is BarrierMonitoring.CONTINUOUS:
+        return None
+    if spec.monitoring_dates is not None:
+        return tuple(spec.monitoring_dates)
+    # N+1 dates from pricing_date to maturity; drop t=0 to leave N dates
+    # at T/N, 2T/N, ..., T.  Matches the standard academic convention for
+    # discretely-monitored barriers.
+    return tuple(
+        pd.date_range(
+            start=pricing_date,
+            end=spec.maturity,
+            periods=spec.num_observations + 1,
+        )[1:].to_pydatetime()
+    )
+
+
+def contract_event_dates(spec: OptionSpec, pricing_date: dt.datetime) -> tuple[dt.datetime, ...]:
+    """Dates a Monte Carlo grid must contain to value *spec* from *pricing_date*.
+
+    The maturity, plus the Asian fixing dates or the discrete barrier
+    monitoring dates, sorted and on or after ``pricing_date`` (earlier
+    fixings are already observed). :func:`shared_time_grid` applies it to
+    every spec passed as ``specs``.
+    """
+    validate_naive_datetime(pricing_date, "pricing_date")
+    dates = {spec.maturity}
+    if isinstance(spec, AsianSpec):
+        dates.update(_asian_fixing_schedule(spec, pricing_date))
+    elif isinstance(spec, BarrierSpec):
+        dates.update(_barrier_monitoring_schedule(spec, pricing_date) or ())
+    return tuple(sorted(d for d in dates if d >= pricing_date))

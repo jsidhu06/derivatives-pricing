@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import datetime as dt
@@ -14,6 +15,9 @@ from .enums import DayCountConvention
 from .utils import calculate_year_fraction, coerce_positive_float, validate_naive_datetime
 from .rates import DiscountCurve
 from .exceptions import ConfigurationError, ValidationError
+
+if TYPE_CHECKING:
+    from .valuation.contracts import OptionSpec
 
 
 _MIXED_DIVIDEND_WARNING_TEMPLATE = (
@@ -279,6 +283,69 @@ class SRDParams:
             )
 
 
+def shared_time_grid(
+    pricing_date: dt.datetime,
+    end_date: dt.datetime,
+    num_steps: int,
+    *,
+    specs: Iterable[OptionSpec] = (),
+    process_params: Iterable[GBMParams | JDParams | SRDParams] = (),
+    extra_dates: Iterable[dt.datetime] = (),
+    grid_start: dt.datetime | None = None,
+) -> np.ndarray:
+    """Simulation dates: a uniform grid merged with every date the inputs need.
+
+    ``num_steps`` equally spaced intervals cover ``[grid_start, end_date]``
+    (``grid_start`` defaults to ``pricing_date``). Merged in on top:
+
+    - ``pricing_date`` and ``end_date``;
+    - each spec's :func:`contract_event_dates` (maturity, discrete barrier
+      monitoring dates, Asian fixing dates);
+    - each process's discrete-dividend ex-dates up to ``end_date`` (later
+      ones never affect the simulation);
+    - ``extra_dates``.
+
+    Dates before ``pricing_date`` are dropped: the diffusion cannot start
+    before the valuation date. This is the grid to give a
+    :class:`CorrelationContext`: pass every contract priced on it as
+    ``specs`` and every asset's parameters as ``process_params``. A process
+    built from ``end_date`` + ``num_steps`` uses the same construction.
+    """
+    # Deferred: valuation imports this module.
+    from .valuation.contracts import contract_event_dates
+
+    validate_naive_datetime(pricing_date, "pricing_date")
+    validate_naive_datetime(end_date, "end_date")
+    if int(num_steps) <= 0:
+        raise ValidationError(f"num_steps must be a positive integer, got {num_steps}")
+    dense_start = grid_start or pricing_date
+    dates = set(
+        pd.date_range(start=dense_start, end=end_date, periods=int(num_steps) + 1).to_pydatetime()
+    )
+    dates |= {pricing_date, dense_start, end_date}
+    # Event dates before the pricing date are dropped: the diffusion cannot
+    # start before the valuation date. (A grid_start before it still fails
+    # the check below.)
+    events: set[dt.datetime] = set()
+    for spec in specs:
+        events.update(contract_event_dates(spec, pricing_date))
+    for params in process_params:
+        for ex_date, _ in getattr(params, "discrete_dividends", None) or ():
+            if ex_date <= end_date:
+                events.add(ex_date)
+    for extra in extra_dates:
+        validate_naive_datetime(extra, "extra_dates entry")
+        events.add(extra)
+    dates |= {d for d in events if d >= pricing_date}
+    sorted_dates = np.array(sorted(dates))
+    if sorted_dates[0] != pricing_date:
+        raise ValidationError(
+            f"Time grid must start at pricing_date ({pricing_date}), "
+            f"but starts at {sorted_dates[0]}. Check grid_start / extra dates."
+        )
+    return sorted_dates
+
+
 class PathSimulation(ABC):
     """Base class for one-factor stochastic process path simulations.
 
@@ -317,7 +384,7 @@ class PathSimulation(ABC):
             self._discrete_dividends = ()
 
         self._last_normals: np.ndarray | None = None
-        self.time_grid = sim_config.time_grid
+        self.time_grid = None if sim_config.time_grid is None else np.asarray(sim_config.time_grid)
         if self.time_grid is not None and len(self.time_grid) > 0:
             grid_start = min(self.time_grid)
             if grid_start < market_data.pricing_date:
@@ -339,6 +406,56 @@ class PathSimulation(ABC):
                 )
             # Validate early: fail now rather than at simulation time.
             self._rn_index: int = corr.asset_index(name)
+            self._validate_against_context(corr)
+
+    def _validate_against_context(self, corr: CorrelationContext) -> None:
+        """Require this process to simulate on the context's shared grid.
+
+        Column k of the context's draws drives (t_k, t_k+1) for every asset,
+        so a process on any other grid would silently pair its intervals
+        with another asset's draws for a different interval. Dates the
+        process needs (ex-dividend and observation dates) must already be
+        on the shared grid: nothing is merged in.
+        """
+        grid = corr.time_grid
+        if self._sim_config.time_grid is None:
+            raise ValidationError(
+                f"Process '{self._name}' is in a CorrelationContext, so it must simulate on "
+                "the context's shared grid: pass SimulationConfig(time_grid=context.time_grid)."
+            )
+        own = list(self._sim_config.time_grid)
+        if len(own) != len(grid) or any(a != b for a, b in zip(own, grid)):
+            mismatch = next(
+                (f"{a} vs {b}" for a, b in zip(own, grid) if a != b),
+                f"{len(own)} dates vs {len(grid)}",
+            )
+            raise ValidationError(
+                f"Process '{self._name}' time_grid differs from its CorrelationContext's "
+                f"shared grid (first difference: {mismatch}); pass "
+                "SimulationConfig(time_grid=context.time_grid)."
+            )
+        if grid[0] != self.pricing_date:
+            raise ValidationError(
+                f"CorrelationContext time_grid starts at {grid[0]}, but process "
+                f"'{self._name}' is priced on {self.pricing_date}; the shared grid must "
+                "start at the pricing date."
+            )
+        if self._sim_config.paths != corr.paths:
+            raise ValidationError(
+                f"Process '{self._name}' simulates {self._sim_config.paths} paths but its "
+                f"CorrelationContext draws cover {corr.paths}."
+            )
+        on_grid = set(grid)
+        missing = sorted(
+            d for d in self._observation_dates if grid[0] <= d <= grid[-1] and d not in on_grid
+        )
+        if missing:
+            raise ValidationError(
+                f"Process '{self._name}' needs dates missing from its CorrelationContext's "
+                f"shared grid: {[d.isoformat() for d in missing]}. Ex-dividend and "
+                "observation dates must already be on the shared grid: pass the process "
+                "parameters to shared_time_grid(..., process_params=...)."
+            )
 
     @property
     def name(self) -> str | None:
@@ -432,28 +549,15 @@ class PathSimulation(ABC):
 
         ``num_steps`` guarantees *at least* N+1 equally-spaced points in
         the dense region; ``observation_dates`` (e.g. fixing dates,
-        ex-dividend dates) may add more.
+        ex-dividend dates) may add more. See :func:`shared_time_grid`.
         """
-        dense_start = self.grid_start or self.pricing_date
-        end = self.end_date
-
-        dates = pd.date_range(
-            start=dense_start, end=end, periods=int(self.num_steps) + 1
-        ).to_pydatetime()
-
-        # Merge generated dates with required boundary + special dates.
-        # Observation dates before pricing_date are excluded — the diffusion
-        # cannot start before the valuation date, and stale dates would
-        # produce negative year-fractions that corrupt forward-rate lookups.
-        valid_obs = {d for d in self.observation_dates if d >= self.pricing_date}
-        all_dates = set(dates) | {self.pricing_date, dense_start, end} | valid_obs
-        sorted_dates = np.array(sorted(all_dates))
-        if sorted_dates[0] != self.pricing_date:
-            raise ValidationError(
-                f"Time grid must start at pricing_date ({self.pricing_date}), "
-                f"but starts at {sorted_dates[0]}. Check grid_start / observation_dates."
-            )
-        return sorted_dates
+        return shared_time_grid(
+            self.pricing_date,
+            self.end_date,  # type: ignore[arg-type]
+            int(self.num_steps),  # type: ignore[arg-type]
+            extra_dates=self.observation_dates,
+            grid_start=self.grid_start,
+        )
 
     def _ensure_time_grid(self) -> None:
         """Populate ``time_grid`` lazily when not explicitly provided."""
@@ -501,6 +605,8 @@ class PathSimulation(ABC):
             self._last_normals = ran
             return ran
 
+        # Correlated draws: the process grid is the context's grid
+        # (validated at construction), so every column lines up.
         corr = self.correlation_context
         base = corr.random_numbers[:, :steps, :]
         correlated = np.einsum("ij,jtp->itp", corr.cholesky_matrix, base)

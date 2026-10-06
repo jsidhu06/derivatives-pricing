@@ -43,6 +43,7 @@ from .contracts import (
     OptionSpec,
     WingBoundary,
     PayoffBoundaryModel,
+    contract_event_dates,
 )
 from .core import OptionValuation, UnderlyingData, as_underlying_data
 from .params import (
@@ -62,6 +63,7 @@ __all__ = [
     "AsianSpec",
     "BarrierSpec",
     "OptionSpec",
+    "contract_event_dates",
     # Barrier enums
     "BarrierDirection",
     "BarrierAction",

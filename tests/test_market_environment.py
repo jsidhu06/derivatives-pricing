@@ -63,12 +63,18 @@ class TestMarketDataValidation:
 # ---------------------------------------------------------------------------
 
 
+def _grid(n_intervals: int) -> list[dt.datetime]:
+    """Monthly-ish grid from PRICING_DATE with *n_intervals* steps."""
+    return [PRICING_DATE + dt.timedelta(days=30 * k) for k in range(n_intervals + 1)]
+
+
 def _valid_corr_context(**overrides):
     """Build a valid 2-asset CorrelationContext, with optional overrides."""
     defaults = dict(
         correlation_matrix=np.array([[1.0, 0.5], [0.5, 1.0]]),
         random_numbers=np.random.default_rng(0).standard_normal((2, 10, 100)),
         asset_names=["A", "B"],
+        time_grid=_grid(10),
     )
     defaults.update(overrides)
     return CorrelationContext(**defaults)
@@ -97,7 +103,10 @@ class TestCorrelationContextValid:
         )
         rn = np.random.default_rng(0).standard_normal((4, 8, 64))
         ctx = CorrelationContext(
-            correlation_matrix=C, random_numbers=rn, asset_names=["A", "B", "C", "D"]
+            correlation_matrix=C,
+            random_numbers=rn,
+            asset_names=["A", "B", "C", "D"],
+            time_grid=_grid(8),
         )
         np.testing.assert_allclose(
             ctx.cholesky_matrix @ ctx.cholesky_matrix.T, C, rtol=1e-10, atol=1e-10
@@ -109,7 +118,7 @@ class TestCorrelationContextValid:
         C = np.array([[1.0, rho, rho], [rho, 1.0, rho], [rho, rho, 1.0]])
         rn = np.random.default_rng(1).standard_normal((3, 6, 32))
         ctx = CorrelationContext(
-            correlation_matrix=C, random_numbers=rn, asset_names=["A", "B", "C"]
+            correlation_matrix=C, random_numbers=rn, asset_names=["A", "B", "C"], time_grid=_grid(6)
         )
         np.testing.assert_allclose(
             ctx.cholesky_matrix @ ctx.cholesky_matrix.T, C, rtol=1e-8, atol=1e-8
@@ -168,4 +177,48 @@ class TestCorrelationContextValidation:
         C = np.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
         rn = np.random.default_rng(0).standard_normal((3, 6, 64))
         with pytest.raises(ValidationError, match="not positive-definite"):
-            CorrelationContext(correlation_matrix=C, random_numbers=rn, asset_names=["A", "B", "C"])
+            CorrelationContext(
+                correlation_matrix=C,
+                random_numbers=rn,
+                asset_names=["A", "B", "C"],
+                time_grid=_grid(6),
+            )
+
+
+class TestCorrelationContextTimeGrid:
+    def test_grid_is_stored_as_a_tuple(self):
+        ctx = _valid_corr_context()
+        assert ctx.time_grid == tuple(_grid(10))
+        assert ctx.paths == 100
+
+    def test_rejects_random_numbers_not_matching_the_grid(self):
+        with pytest.raises(ValidationError, match=r"axis-1 \(10\) must equal .* intervals \(9\)"):
+            _valid_corr_context(time_grid=_grid(9))
+
+    def test_rejects_unsorted_grid(self):
+        grid = _grid(10)
+        grid[3], grid[4] = grid[4], grid[3]
+        with pytest.raises(ValidationError, match="strictly ascending"):
+            _valid_corr_context(time_grid=grid)
+
+    def test_rejects_single_date_grid(self):
+        with pytest.raises(ValidationError, match="at least two dates"):
+            _valid_corr_context(time_grid=[PRICING_DATE])
+
+    def test_from_seed_draws_matching_shapes(self):
+        ctx = CorrelationContext.from_seed(
+            correlation_matrix=np.array([[1.0, 0.5], [0.5, 1.0]]),
+            asset_names=["A", "B"],
+            time_grid=_grid(12),
+            paths=64,
+            random_seed=7,
+        )
+        assert ctx.random_numbers.shape == (2, 12, 64)
+        again = CorrelationContext.from_seed(
+            correlation_matrix=np.array([[1.0, 0.5], [0.5, 1.0]]),
+            asset_names=["A", "B"],
+            time_grid=_grid(12),
+            paths=64,
+            random_seed=7,
+        )
+        np.testing.assert_array_equal(ctx.random_numbers, again.random_numbers)

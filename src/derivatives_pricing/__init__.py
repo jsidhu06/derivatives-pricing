@@ -28,6 +28,7 @@ from .stochastic_processes import (
     JDProcess,
     SRDProcess,
     PathSimulation,
+    shared_time_grid,
 )
 from .enums import (
     OptionType,
@@ -55,6 +56,7 @@ from .valuation import (
     WingBoundary,
     AsianSpec,
     BarrierSpec,
+    contract_event_dates,
     MonteCarloParams,
     BinomialParams,
     PDEParams,
@@ -76,6 +78,7 @@ __all__ = [
     "JDProcess",
     "SRDProcess",
     "PathSimulation",
+    "shared_time_grid",
     # Enums
     "OptionType",
     "ExerciseType",
@@ -101,6 +104,7 @@ __all__ = [
     "WingBoundary",
     "AsianSpec",
     "BarrierSpec",
+    "contract_event_dates",
     "MonteCarloParams",
     "BinomialParams",
     "PDEParams",
