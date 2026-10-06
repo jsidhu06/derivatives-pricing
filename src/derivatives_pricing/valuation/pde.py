@@ -2961,11 +2961,29 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
                 day_count_convention=ctx.day_count_convention,
             )
 
-        args = dict(
-            spot=float(self.underlying.initial_value),
-            strike=float(spec.strike),
+        spot = float(self.underlying.initial_value)
+        strike = float(spec.strike)
+        volatility = float(self.underlying.volatility)
+        domain = _barrier_domain(
+            spot=spot,
+            strike=strike,
+            log_forward=_log_forward(
+                spot=spot,
+                time_to_maturity=time_to_maturity,
+                discount_curve=ctx.discount_curve,
+                dividend_curve=self.underlying.dividend_curve,
+                dividend_schedule=dividend_schedule,
+            ),
+            time_to_maturity=time_to_maturity,
+            volatility=volatility,
+            smax_mult=params.smax_mult,
+            space_grid=params.space_grid,
+        )
+        return dict(
+            spot=spot,
+            strike=strike,
             time_to_maturity=float(time_to_maturity),
-            volatility=float(self.underlying.volatility),
+            volatility=volatility,
             discount_curve=ctx.discount_curve,
             dividend_curve=self.underlying.dividend_curve,
             dividend_schedule=dividend_schedule,
@@ -2987,23 +3005,8 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
             omega=float(params.omega) if early_exercise else None,
             tol=float(params.tol) if early_exercise else None,
             max_iter=int(params.max_iter) if early_exercise else None,
+            domain=domain,
         )
-        args["domain"] = _barrier_domain(
-            spot=args["spot"],
-            strike=args["strike"],
-            log_forward=_log_forward(
-                spot=args["spot"],
-                time_to_maturity=args["time_to_maturity"],
-                discount_curve=args["discount_curve"],
-                dividend_curve=args["dividend_curve"],
-                dividend_schedule=dividend_schedule,
-            ),
-            time_to_maturity=args["time_to_maturity"],
-            volatility=args["volatility"],
-            smax_mult=params.smax_mult,
-            space_grid=params.space_grid,
-        )
-        return args
 
     def _solve_european_ki_components(
         self,
