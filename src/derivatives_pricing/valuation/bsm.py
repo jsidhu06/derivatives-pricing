@@ -246,6 +246,11 @@ class _BSMEuropeanValuation(_BSMValuationBase):
                     + r * K * e^(-rT) * N(-d2)
                     - q * S * e^(-qT) * N(-d1)
 
+        ``r`` and ``q`` are the zero rates to maturity, ``-ln(df(T)) / T``,
+        the flat-equivalent rates that price the option (as in QuantLib's
+        ``BlackCalculator::theta``).  On a sloped curve other theta methods
+        use other rates; see :meth:`OptionValuation.theta`.
+
         Returns
         -------
         float

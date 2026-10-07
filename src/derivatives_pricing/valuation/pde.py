@@ -1710,7 +1710,9 @@ class _FDGridGreeksMixin:
         order of accuracy as the grid delta and gamma — notably better
         near steep spatial gradients such as a barrier, where a
         first-order backward time-difference amplifies the local error
-        in ``V``.  Returned per **calendar day**.
+        in ``V``.  ``r`` and ``q`` are the curves' forward rates over the
+        first step: the one-day decay with the calendar curve held fixed (see
+        :meth:`OptionValuation.theta`).  Returned per **calendar day**.
 
         Short-circuits to ``0`` when the option is American and the spot
         node sits in the early-exercise region; the Black-Scholes PDE

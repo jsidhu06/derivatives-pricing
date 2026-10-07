@@ -562,7 +562,9 @@ class _MCEuropeanValuation(_MCValuationBase):
             \Phi'(S_T)\,S_T\!\left(a + \frac{\sigma Z}{2\sqrt{T}}\right)
             - r\,\Phi(S_T)\right]
 
-        where :math:`a = r - q - \tfrac12\sigma^2`.
+        where :math:`a = r - q - \tfrac12\sigma^2`, with ``r`` and ``q`` the
+        zero rates to maturity, as for the analytical theta (see
+        :meth:`OptionValuation.theta`).
         """
         ST, idx, ttm, df = self._simulate_terminal()
         Z = self._effective_terminal_z(idx, ttm)
@@ -589,7 +591,9 @@ class _MCEuropeanValuation(_MCValuationBase):
             \Phi(S_T)\!\left(\frac{Z^2-1}{2T}
             + \frac{aZ}{\sigma\sqrt{T}} - r\right)\right]
 
-        where :math:`a = r - q - \tfrac12\sigma^2`.
+        where :math:`a = r - q - \tfrac12\sigma^2`, with ``r`` and ``q`` the
+        zero rates to maturity, as for the analytical theta (see
+        :meth:`OptionValuation.theta`).
         """
         sigma = float(self.underlying.volatility)
         self._require_positive_sigma_for_lr(sigma, "theta")

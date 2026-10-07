@@ -36,7 +36,11 @@ knock-in and knock-out structures, and rebates.
 
 ### Additional Capabilities
 
-- **Greeks** — analytical, tree, grid, pathwise, likelihood-ratio, and numerical bump-and-revalue (delta, gamma, vega, theta, rho)
+- **Greeks** — analytical, tree, grid, pathwise, likelihood-ratio, and numerical bump-and-revalue (delta, gamma, vega, theta, rho). On a sloped curve
+  theta depends on the method: analytical and MC pathwise / likelihood-ratio theta use the zero
+  rates to maturity (as QuantLib's `BlackCalculator`), tree and PDE theta use the short-end forward
+  rates (as QuantLib's FD engines), and numerical theta slides the curve with the pricing date
+  (bringing in the forward rate at maturity); a single convention is planned
 - **Implied volatility** — Newton-Raphson, bisection, and Brent solvers with arbitrage-bounds checking; one absolute vol tolerance for every method, and quotes whose vega is too small to determine the vol (far out of the money, near intrinsic) are flagged `well_determined=False`; Newton by default for ANALYTICAL, Brent for the tree and PDE (no vega needed)
 - **Stochastic processes** — Geometric Brownian Motion, Jump Diffusion (Merton), Square-Root Diffusion (CIR)
 - **Discount curves** — log-linear interpolation on arbitrary term structures; deterministic time-varying forward rate and dividend curves
