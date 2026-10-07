@@ -580,6 +580,71 @@ def test_discrete_div_european_vs_quantlib(r_curve):
     assert np.isclose(mc_pv, binom_adj, rtol=0.015, atol=1e-3)
 
 
+@pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+def test_mixed_yield_and_cash_dividends_vs_quantlib(option_type):
+    """Yield plus cash dividends: both dividend models share QuantLib's forward.
+
+    QuantLib discounts each cash dividend at ``r - q`` (``df_r / df_q``).  The
+    escrowed analytic price must match ``AnalyticDividendEuropeanEngine``
+    exactly; the spot-drop PDE must match QuantLib's FD engine for European
+    and American exercise.
+    """
+    spot, strike, q = 52.0, 50.0, 0.06
+    divs = [
+        (PRICING_DATE + dt.timedelta(days=90), 2.0),
+        (PRICING_DATE + dt.timedelta(days=270), 2.0),
+    ]
+    r_curve = flat_curve(PRICING_DATE, MATURITY, _ME_RATE)
+    q_curve = flat_curve(PRICING_DATE, MATURITY, q)
+    with pytest.warns(UserWarning, match="both dividend_curve and discrete_dividends"):
+        ud = _underlying(
+            spot=spot, r_curve=r_curve, dividend_curve=q_curve, discrete_dividends=divs
+        )
+
+    rf_h, div_h = _ql_flat_handles(rf_rate=_ME_RATE, div_yield=q)
+    eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
+    ql.Settings.instance().evaluationDate = eval_date
+    ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
+    process = ql.BlackScholesMertonProcess(
+        ql.QuoteHandle(ql.SimpleQuote(spot)),
+        div_h,
+        rf_h,
+        ql.BlackVolTermStructureHandle(
+            ql.BlackConstantVol(eval_date, ql.TARGET(), float(_ME_VOL), ql.Actual365Fixed())
+        ),
+    )
+    ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
+    ql_option = ql.VanillaOption(
+        ql.PlainVanillaPayoff(ql_type, strike), ql.EuropeanExercise(ql_maturity)
+    )
+    ql_option.setPricingEngine(
+        ql.AnalyticDividendEuropeanEngine(process, _quantlib_dividend_schedule(divs))
+    )
+    ql_analytic = float(ql_option.NPV())
+
+    for exercise_type in (ExerciseType.EUROPEAN, ExerciseType.AMERICAN):
+        spec = _spec(strike=strike, option_type=option_type, exercise_type=exercise_type)
+        if exercise_type is ExerciseType.EUROPEAN:
+            bsm_pv = _dp_price(ud, spec, PricingMethod.ANALYTICAL)
+            binom_pv = _dp_price(ud, spec, PricingMethod.BINOMIAL, _ME_BINOM)
+            assert np.isclose(bsm_pv, ql_analytic, rtol=1e-10, atol=1e-12)
+            assert np.isclose(binom_pv, bsm_pv, rtol=2e-3, atol=1e-4)
+
+        pde_pv = _dp_price(ud, spec, PricingMethod.PDE_FD, _ME_PDE)
+        ql_fd = _ql_price(
+            spot=spot,
+            strike=strike,
+            option_type=option_type,
+            exercise_type=exercise_type,
+            rf_handle=rf_h,
+            div_handle=div_h,
+            discrete_dividends=divs,
+        )
+        assert np.isclose(pde_pv, ql_fd, rtol=5e-3, atol=1e-3), (
+            f"{exercise_type.name} PDE {pde_pv:.6f} vs QL {ql_fd:.6f}"
+        )
+
+
 # ── Discrete-dividend American — PDE / MC / QuantLib ───────────────────
 
 

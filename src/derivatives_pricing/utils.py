@@ -202,8 +202,15 @@ def pv_discrete_dividends(
     start_date: datetime | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
     include_start: bool = True,
+    dividend_curve: DiscountCurve | None = None,
 ) -> float:
     """Present value of discrete cash dividends in a date range.
+
+    Each dividend is discounted by ``df_r / df_q`` from its ex-date back to
+    ``start_date``, i.e. at the cost of carry ``r - q`` (QuantLib's
+    convention).  This is the amount that, grown at ``r - q`` alongside the
+    stock, equals the dividend on its ex-date, so the escrowed forward
+    ``(S - PV) * df_q / df_r`` matches the spot-drop forward.
 
     Parameters
     ----------
@@ -218,13 +225,17 @@ def pv_discrete_dividends(
         escrowed-dividend add-back at intermediate tree nodes, where a
         dividend going ex at exactly *t* has already left the stock
         price.
+    dividend_curve : DiscountCurve, optional
+        Continuous dividend-yield curve ``q``.  ``None`` means ``q = 0``.
     """
     if not dividends:
         return 0.0
 
     start_date = curve_date if start_date is None else start_date
+
     t_start = calculate_year_fraction(curve_date, start_date, day_count_convention)
-    df_start = float(discount_curve.df(t_start))
+    r_df_start = float(discount_curve.df(t_start))
+    q_df_start = 1.0 if dividend_curve is None else float(dividend_curve.df(t_start))
 
     pv = 0.0
     for ex_date, amount in dividends:
@@ -234,9 +245,10 @@ def pv_discrete_dividends(
             in_range = start_date < ex_date <= end_date
         if in_range:
             t_ex = calculate_year_fraction(curve_date, ex_date, day_count_convention)
-            df_ex = float(discount_curve.df(t_ex))
-            df = df_ex / df_start
-            pv += float(amount) * df
+            # Discount factors from start_date to the ex-date.
+            df_r = float(discount_curve.df(t_ex)) / r_df_start
+            df_q = 1.0 if dividend_curve is None else float(dividend_curve.df(t_ex)) / q_df_start
+            pv += float(amount) * df_r / df_q
     return float(pv)
 
 
@@ -252,9 +264,10 @@ def forward_price(
 ) -> float:
     """Compute the no-arbitrage forward price for an equity-style underlying.
 
-    Supports continuous dividend curve, discrete dividends, or both.  When both
-    are provided the continuous yield enters the cost-of-carry and the PV of
-    discrete dividends is subtracted from spot.
+    Supports continuous dividend curve, discrete dividends, or both:
+    ``F = (S - PV(D)) * df_q / df_r`` with ``PV(D)`` discounted at ``r - q``
+    (see :func:`pv_discrete_dividends`).  This is QuantLib's forward and the
+    expected terminal spot under the spot-drop dividend model.
 
     Parameters
     ----------
@@ -301,13 +314,14 @@ def forward_price(
             end_date=maturity,
             discount_curve=discount_curve,
             day_count_convention=day_count_convention,
+            dividend_curve=dividend_curve,
         )
 
     # Continuous dividend yield discount factor (1 if none)
     df_q = 1.0 if dividend_curve is None else float(dividend_curve.df(t))
     df_r = float(discount_curve.df(t))
 
-    fwd = (spot * df_q - pv_divs) / df_r
+    fwd = (spot - pv_divs) * df_q / df_r
     return float(fwd)
 
 

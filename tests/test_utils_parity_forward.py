@@ -2,6 +2,7 @@
 
 import datetime as dt
 import numpy as np
+import pytest
 
 from derivatives_pricing.enums import OptionType, ExerciseType, PricingMethod
 from derivatives_pricing.market_environment import MarketData
@@ -10,6 +11,7 @@ from derivatives_pricing.valuation import VanillaSpec, UnderlyingData, OptionVal
 from derivatives_pricing.utils import (
     calculate_year_fraction,
     forward_price,
+    pv_discrete_dividends,
     put_call_parity_rhs,
     put_call_parity_gap,
 )
@@ -58,6 +60,53 @@ def test_forward_price_discrete_dividends():
     pv_div = 0.5 * np.exp(-r * t_div)
     expected = (spot - pv_div) * np.exp(r * ttm)
     assert np.isclose(fwd, expected)
+
+
+def test_forward_price_yield_and_discrete_dividends_discounts_at_carry():
+    """With a yield, each cash dividend is discounted at r - q (QuantLib)."""
+    pricing_date = dt.datetime(2025, 1, 1)
+    maturity = dt.datetime(2026, 1, 1)
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    spot, r, q, amount = 100.0, 0.05, 0.03, 2.0
+    ex_date = dt.datetime(2025, 7, 1)
+    r_curve = flat_curve(pricing_date, maturity, r)
+    q_curve = flat_curve(pricing_date, maturity, q)
+
+    with pytest.warns(UserWarning, match="Both dividend_curve and discrete_dividends"):
+        fwd = forward_price(
+            spot=spot,
+            pricing_date=pricing_date,
+            maturity=maturity,
+            discount_curve=r_curve,
+            dividend_curve=q_curve,
+            discrete_dividends=[(ex_date, amount)],
+        )
+
+    t_div = calculate_year_fraction(pricing_date, ex_date)
+    pv_div = amount * np.exp(-(r - q) * t_div)
+    expected = (spot - pv_div) * np.exp((r - q) * ttm)
+    assert np.isclose(fwd, expected, rtol=1e-12)
+    # Spot-drop view: grow S to the ex-date, drop D, grow to maturity.
+    spot_drop = (spot * np.exp((r - q) * t_div) - amount) * np.exp((r - q) * (ttm - t_div))
+    assert np.isclose(fwd, spot_drop, rtol=1e-12)
+
+
+def test_pv_discrete_dividends_from_intermediate_start_discounts_at_carry():
+    pricing_date = dt.datetime(2025, 1, 1)
+    maturity = dt.datetime(2026, 1, 1)
+    r, q = 0.05, 0.03
+    start = dt.datetime(2025, 4, 1)
+    ex_date = dt.datetime(2025, 10, 1)
+    pv = pv_discrete_dividends(
+        [(ex_date, 1.0)],
+        curve_date=pricing_date,
+        end_date=maturity,
+        discount_curve=flat_curve(pricing_date, maturity, r),
+        start_date=start,
+        dividend_curve=flat_curve(pricing_date, maturity, q),
+    )
+    tau = calculate_year_fraction(start, ex_date)
+    assert np.isclose(pv, np.exp(-(r - q) * tau), rtol=1e-12)
 
 
 def test_put_call_parity_rhs_and_gap():

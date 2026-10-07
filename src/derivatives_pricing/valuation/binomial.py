@@ -218,6 +218,7 @@ class _BinomialValuationBase:
                 discount_curve=discount_curve,
                 day_count_convention=self.valuation_ctx.day_count_convention,
                 include_start=True,
+                dividend_curve=self.underlying.dividend_curve,
             )
             spot = max(spot - pv_all, 0.0)
 
@@ -239,6 +240,7 @@ class _BinomialValuationBase:
                     start_date=t,
                     day_count_convention=self.valuation_ctx.day_count_convention,
                     include_start=False,
+                    dividend_curve=self.underlying.dividend_curve,
                 )
                 for t in time_intervals
             ],
