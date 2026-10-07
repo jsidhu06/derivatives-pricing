@@ -23,7 +23,9 @@ from helpers import (
 )
 from derivatives_pricing.valuation import OptionValuation
 from derivatives_pricing.valuation.core import AsianSpec
-from derivatives_pricing.valuation.params import BinomialParams, PDEParams
+from derivatives_pricing.exceptions import UnsupportedFeatureError
+from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
+from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +103,78 @@ def test_control_variate_pde_matches_adjustment():
 
     expected = american_raw + (european_bsm - european_num)
     assert np.isclose(american_cv, expected, atol=1.0e-6)
+
+
+# ---------------------------------------------------------------------------
+# Discrete dividends: the analytical reference uses the escrowed model
+# ---------------------------------------------------------------------------
+
+
+class TestControlVariateDividendModels:
+    """The correction is only valid when the engine and ANALYTICAL share a dividend model."""
+
+    EX_DATE = PRICING_DATE + dt.timedelta(days=120)
+
+    def _amer_put(self):
+        return spec(OptionType.PUT, ExerciseType.AMERICAN, strike=100.0)
+
+    @pytest.mark.parametrize(
+        "method,params",
+        [
+            (
+                PricingMethod.PDE_FD,
+                PDEParams(spot_steps=60, time_steps=60, control_variate_european=True),
+            ),
+            (PricingMethod.MONTE_CARLO, MonteCarloParams(control_variate_european=True)),
+        ],
+    )
+    def test_rejected_for_spot_drop_engines(self, method, params):
+        ud = _underlying(
+            initial_value=100.0,
+            volatility=0.25,
+            rate=0.03,
+            discrete_dividends=[(self.EX_DATE, 2.0)],
+        )
+        if method is PricingMethod.MONTE_CARLO:
+            ud = GBMProcess(
+                ud.market_data,
+                GBMParams(
+                    initial_value=100.0, volatility=0.25, discrete_dividends=[(self.EX_DATE, 2.0)]
+                ),
+                SimulationConfig(paths=2_000, num_steps=12, end_date=MATURITY),
+            )
+        ov = OptionValuation(ud, self._amer_put(), method, params=params)
+        with pytest.raises(
+            UnsupportedFeatureError, match=rf"{method.name} with discrete dividends"
+        ):
+            ov.present_value()
+
+    def test_binomial_shares_the_escrowed_model(self):
+        ud = _underlying(
+            initial_value=100.0,
+            volatility=0.25,
+            rate=0.03,
+            discrete_dividends=[(self.EX_DATE, 2.0)],
+        )
+        euro = spec(OptionType.PUT, ExerciseType.EUROPEAN, strike=100.0)
+        base = BinomialParams(num_steps=300)
+        cv = BinomialParams(num_steps=300, control_variate_european=True)
+        raw = OptionValuation(ud, self._amer_put(), PricingMethod.BINOMIAL, base).present_value()
+        euro_tree = OptionValuation(ud, euro, PricingMethod.BINOMIAL, base).present_value()
+        euro_bsm = OptionValuation(ud, euro, PricingMethod.ANALYTICAL).present_value()
+        adjusted = OptionValuation(ud, self._amer_put(), PricingMethod.BINOMIAL, cv).present_value()
+        assert np.isclose(adjusted, raw + (euro_bsm - euro_tree), atol=1e-8)
+        # Same model: the European tree error is small, so the correction is too.
+        assert abs(euro_bsm - euro_tree) < 1e-2
+
+    def test_dividends_outside_the_option_life_are_ignored(self):
+        after = MATURITY + dt.timedelta(days=30)
+        ud = _underlying(
+            initial_value=100.0, volatility=0.25, rate=0.03, discrete_dividends=[(after, 2.0)]
+        )
+        params = PDEParams(spot_steps=60, time_steps=60, control_variate_european=True)
+        ov = OptionValuation(ud, self._amer_put(), PricingMethod.PDE_FD, params=params)
+        assert ov.present_value() > 0.0
 
 
 # ---------------------------------------------------------------------------

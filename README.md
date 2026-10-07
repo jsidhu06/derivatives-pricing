@@ -40,7 +40,12 @@ knock-in and knock-out structures, and rebates.
 - **Implied volatility** — Newton-Raphson, bisection, and Brent solvers with arbitrage-bounds checking
 - **Stochastic processes** — Geometric Brownian Motion, Jump Diffusion (Merton), Square-Root Diffusion (CIR)
 - **Discount curves** — log-linear interpolation on arbitrary term structures; deterministic time-varying forward rate and dividend curves
-- **Discrete dividends** — supported across all pricing methods
+- **Discrete dividends** — supported across all pricing methods, under two standard models:
+  `ANALYTICAL` and `BINOMIAL` use the escrowed model (the spot less the PV of dividends to
+  maturity follows GBM), while `PDE_FD` and `MONTE_CARLO` drop the spot by each cash amount on
+  its ex-date. The two give different prices for the same inputs, so compare engines within a
+  model, and the European control variate is rejected for `PDE_FD` / `MONTE_CARLO` when there
+  are discrete dividends
 - **Control variates** — European analytical control variates for American pricing variance reduction
 - **Custom payoffs** — user-defined payoff functions via `PayoffSpec`
 

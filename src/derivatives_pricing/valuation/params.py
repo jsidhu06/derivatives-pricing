@@ -50,7 +50,9 @@ class MonteCarloParams:
     control_variate_european:
         Apply control variate adjustment for American options using the
         analytical European price and the MC European price from the same
-        simulation.  Only applicable to American exercise pricing.
+        simulation.  Only applicable to American exercise pricing. Rejected
+        with discrete dividends: MC drops the spot on each ex-date, while the
+        analytical reference uses the escrowed model.
         Default: ``False``.
     barrier_aware_basis:
         When ``True``, American barrier Monte Carlo augments the LSM
@@ -122,7 +124,9 @@ class BinomialParams:
     control_variate_european:
         Apply Hull-style control variate adjustment for American options using
         analytical European price and the numerical European price from the same method.
-        Only applicable to vanilla call/put American pricing.
+        Only applicable to vanilla call/put American pricing. Valid with
+        discrete dividends: the tree and the analytical reference both use the
+        escrowed-dividend model.
         Default: ``False``.
     log_timings:
         If ``True``, log debug timing for solver execution.
@@ -232,6 +236,8 @@ class PDEParams:
         Default: ``PDEEarlyExercise.GAUSS_SEIDEL``.
     control_variate_european
         Apply Hull-style control-variate adjustment for American vanilla call/put pricing.
+        Rejected with discrete dividends: the PDE drops the spot on each
+        ex-date, while the analytical reference uses the escrowed model.
         Default: ``False``.
     log_timings
         If ``True``, emit debug timing logs for solver execution.
