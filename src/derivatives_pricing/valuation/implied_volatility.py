@@ -94,6 +94,7 @@ def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, f
         end_date=valuation.maturity,
         discount_curve=valuation.discount_curve,
         day_count_convention=valuation.day_count_convention,
+        dividend_curve=dividend_curve,
     )
     if dividend_curve is None:
         df_q = 1.0

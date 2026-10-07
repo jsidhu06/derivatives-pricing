@@ -45,7 +45,8 @@ knock-in and knock-out structures, and rebates.
   maturity follows GBM), while `PDE_FD` and `MONTE_CARLO` drop the spot by each cash amount on
   its ex-date. The two give different prices for the same inputs, so compare engines within a
   model, and the European control variate is rejected for `PDE_FD` / `MONTE_CARLO` when there
-  are discrete dividends
+  are discrete dividends. Both models share QuantLib's forward: with a dividend yield as well,
+  each dividend's PV is discounted at `r - q`
 - **Control variates** — European analytical control variates for American pricing variance reduction
 - **Custom payoffs** — user-defined payoff functions via `PayoffSpec`
 

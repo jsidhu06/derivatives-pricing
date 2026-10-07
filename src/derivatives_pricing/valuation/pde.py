@@ -101,13 +101,15 @@ def _log_forward(
     dividend_curve: DiscountCurve | None,
     dividend_schedule: list[tuple[float, float]] | None,
 ) -> float:
-    """``ln F(0, T)`` with continuous yield and cash dividends (escrowed PV)."""
+    """``ln F(0, T)`` with continuous yield and cash dividends (PV at ``r - q``)."""
     df_r = float(discount_curve.df(time_to_maturity))
     df_q = float(dividend_curve.df(time_to_maturity)) if dividend_curve is not None else 1.0
-    pv_divs = sum(
-        amount * float(discount_curve.df(max(time_to_maturity - tau, 0.0)))
-        for tau, amount in (dividend_schedule or [])
-    )
+    pv_divs = 0.0
+    for tau, amount in dividend_schedule or []:
+        t_ex = max(time_to_maturity - tau, 0.0)
+        df_r_ex = float(discount_curve.df(t_ex))
+        df_q_ex = float(dividend_curve.df(t_ex)) if dividend_curve is not None else 1.0
+        pv_divs += amount * df_r_ex / df_q_ex
     return math.log(max(spot - pv_divs, 1.0e-8 * spot) * df_q / df_r)
 
 

@@ -112,6 +112,7 @@ class _BSMValuationBase:
             end_date=self.valuation_ctx.maturity,
             discount_curve=self.valuation_ctx.discount_curve,
             day_count_convention=self.valuation_ctx.day_count_convention,
+            dividend_curve=self.underlying.dividend_curve,
         )
         return max(spot - pv_divs, 0.0)
 

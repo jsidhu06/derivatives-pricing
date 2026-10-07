@@ -1,8 +1,10 @@
 """Tests for discrete dividend consistency across pricing engines."""
 
+import dataclasses
 import datetime as dt
 
 import numpy as np
+import pytest
 
 from derivatives_pricing.enums import ExerciseType, OptionType, PricingMethod
 from derivatives_pricing.market_environment import MarketData
@@ -19,7 +21,7 @@ from helpers import (
     spec,
     PRICING_DATE,
 )
-from derivatives_pricing.utils import pv_discrete_dividends
+from derivatives_pricing.utils import put_call_parity_rhs, pv_discrete_dividends
 from derivatives_pricing.valuation import OptionValuation, UnderlyingData
 from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
@@ -114,6 +116,42 @@ def test_discrete_dividend_engine_consistency():
 
     assert np.isclose(mc_pv, bsm_adj, rtol=0.02)
     assert np.isclose(pde_pv, binom_adj, rtol=0.02)
+
+
+def test_mixed_yield_and_cash_dividends_put_call_parity_all_models():
+    """Escrowed and spot-drop engines price off the same forward with a yield.
+
+    Larger dividends and yield than the Hull case make discounting cash
+    dividends at r rather than r - q a ~0.1 parity error, far above the
+    PDE's discretisation error.
+    """
+    divs = [
+        (PRICING_DATE + dt.timedelta(days=90), 2.0),
+        (PRICING_DATE + dt.timedelta(days=270), 2.0),
+    ]
+    q_curve = flat_curve(PRICING_DATE, _MATURITY, 0.06)
+    with pytest.warns(UserWarning, match="both dividend_curve and discrete_dividends"):
+        md, put_spec, ud, _ = _build_case(dividend_curve=q_curve, discrete_dividends=divs)
+    call_spec = dataclasses.replace(put_spec, option_type=OptionType.CALL)
+    rhs = put_call_parity_rhs(
+        spot=_SPOT,
+        strike=_STRIKE,
+        pricing_date=PRICING_DATE,
+        maturity=_MATURITY,
+        discount_curve=md.discount_curve,
+        dividend_curve=q_curve,
+        discrete_dividends=divs,
+    )
+
+    cases = [
+        (PricingMethod.ANALYTICAL, None, 1e-10),
+        (PricingMethod.BINOMIAL, BinomialParams(num_steps=500), 1e-8),
+        (PricingMethod.PDE_FD, PDEParams(spot_steps=200, time_steps=200), 5e-3),
+    ]
+    for method, params, atol in cases:
+        call = OptionValuation(ud, call_spec, method, params=params).present_value()
+        put = OptionValuation(ud, put_spec, method, params=params).present_value()
+        assert np.isclose(call - put, rhs, rtol=0.0, atol=atol), (method, call - put, rhs)
 
 
 def test_binomial_accepts_discrete_dividends_with_nonflat_curve():
