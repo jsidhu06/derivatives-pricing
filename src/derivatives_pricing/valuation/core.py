@@ -1258,6 +1258,25 @@ class OptionValuation:
                 "control_variate_european requires a CALL or PUT option type."
             )
 
+        if self._pricing_method in (PricingMethod.PDE_FD, PricingMethod.MONTE_CARLO) and any(
+            self.pricing_date < ex_date <= self.maturity
+            for ex_date, _ in self._underlying.discrete_dividends
+        ):
+            # The correction (european_analytical - european_numerical) is
+            # meant to hold only the engine's discretisation error. PDE_FD
+            # and MONTE_CARLO drop the spot by each dividend on its ex-date,
+            # while ANALYTICAL uses the escrowed model, so with cash
+            # dividends it would also hold the model gap and give a price
+            # neither model supports.
+            raise UnsupportedFeatureError(
+                "control_variate_european is not supported for "
+                f"{self._pricing_method.name} with discrete dividends: this engine drops "
+                "the spot by each dividend on its ex-date, while the ANALYTICAL European "
+                "reference uses the escrowed-dividend model, so the correction would mix "
+                "two models. Use BINOMIAL (escrowed, like ANALYTICAL) or turn the control "
+                "variate off."
+            )
+
         euro_spec = dc_replace(self._spec, exercise_type=ExerciseType.EUROPEAN)
 
         cv_params = dc_replace(self._params, control_variate_european=False)
