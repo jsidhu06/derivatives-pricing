@@ -12,7 +12,7 @@ Plugged into the registry dispatcher in ``core.py``.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 import logging
 import threading
 import warnings
@@ -37,10 +37,70 @@ from ..exceptions import (
 from .params import BinomialParams
 
 if TYPE_CHECKING:
+    from ..rates import DiscountCurve
     from .core import AsianSpec, BarrierSpec, OptionValuation, UnderlyingData
 
 
 logger = logging.getLogger(__name__)
+
+
+def _crr_step_rates(
+    valuation_ctx: Any,
+    dividend_curve: DiscountCurve | None,
+    num_steps: int,
+) -> tuple[pd.DatetimeIndex, float, np.ndarray, np.ndarray]:
+    """CRR step dates, the (uniform) step length, and per-step forward rates.
+
+    Returns ``(time_intervals, delta_t, forward_rates, dividend_forwards)``;
+    the rate arrays have one entry per step.
+    """
+    start = valuation_ctx.pricing_date
+    end = valuation_ctx.maturity
+    time_intervals = pd.date_range(start, end, periods=num_steps + 1)
+    time_grid = np.array(
+        [
+            calculate_year_fraction(
+                start,
+                t,
+                day_count_convention=valuation_ctx.day_count_convention,
+            )
+            for t in time_intervals
+        ],
+        dtype=float,
+    )
+    dt_steps = np.diff(time_grid)
+    if not np.allclose(dt_steps, dt_steps[0]):
+        raise UnsupportedFeatureError(
+            f"Binomial trees (CRR) require equal time steps, but the "
+            f"'{valuation_ctx.day_count_convention.value}' day-count convention "
+            f"produces non-uniform year fractions on a calendar date grid. "
+            f"Use an actual-day convention (ACT/365F, ACT/360) or switch to "
+            f"PDE / Monte Carlo pricing."
+        )
+    delta_t = float(dt_steps[0])
+    forward_rates = valuation_ctx.discount_curve.step_forward_rates(time_grid)
+    if dividend_curve is not None:
+        dividend_forwards = dividend_curve.step_forward_rates(time_grid)
+    else:
+        dividend_forwards = np.zeros(num_steps, dtype=float)
+    return time_intervals, delta_t, forward_rates, dividend_forwards
+
+
+def _crr_min_volatility(valuation_ctx: Any, dividend_curve: DiscountCurve | None) -> float:
+    """Smallest volatility the CRR tree accepts for this valuation.
+
+    The tree needs ``d < exp((r_i - q_i) dt) < u`` at every step i, with
+    ``u = 1/d = exp(sigma sqrt(dt))``. That holds exactly when
+    ``sigma > |r_i - q_i| sqrt(dt)`` for all i, so the bound uses the
+    per-step forward rates the tree uses (on a term curve some steps need
+    more than the average rate suggests).
+    """
+    params = valuation_ctx.params
+    assert isinstance(params, BinomialParams)  # resolved defaults; num_steps >= 1
+    _, delta_t, forward_rates, dividend_forwards = _crr_step_rates(
+        valuation_ctx, dividend_curve, params.num_steps
+    )
+    return float(np.max(np.abs(forward_rates - dividend_forwards)) * np.sqrt(delta_t))
 
 
 class _BinomialValuationBase:
@@ -97,45 +157,13 @@ class _BinomialValuationBase:
             spot_lattice : shape (num_steps+1, num_steps+1) — CRR spot prices
         """
         num_steps = self._effective_num_steps()
-        start = self.valuation_ctx.pricing_date
-        end = self.valuation_ctx.maturity
-        time_intervals = pd.date_range(start, end, periods=num_steps + 1)
-
-        # Numerical Parameters
-        time_grid = np.array(
-            [
-                calculate_year_fraction(
-                    start,
-                    t,
-                    day_count_convention=self.valuation_ctx.day_count_convention,
-                )
-                for t in time_intervals
-            ],
-            dtype=float,
+        time_intervals, delta_t, forward_rates, dividend_forwards = _crr_step_rates(
+            self.valuation_ctx, self.underlying.dividend_curve, num_steps
         )
-        dt_steps = np.diff(time_grid)
-        if not np.allclose(dt_steps, dt_steps[0]):
-            raise UnsupportedFeatureError(
-                f"Binomial trees (CRR) require equal time steps, but the "
-                f"'{self.valuation_ctx.day_count_convention.value}' day-count convention "
-                f"produces non-uniform year fractions on a calendar date grid. "
-                f"Use an actual-day convention (ACT/365F, ACT/360) or switch to "
-                f"PDE / Monte Carlo pricing."
-            )
-        delta_t = float(dt_steps[0])
 
         sigma = float(self.underlying.volatility)
         u = np.exp(sigma * np.sqrt(delta_t))
         d = 1.0 / u
-
-        discount_curve = self.valuation_ctx.discount_curve
-        forward_rates = discount_curve.step_forward_rates(time_grid)
-
-        dividend_curve = self.underlying.dividend_curve
-        if dividend_curve is not None:
-            dividend_forwards = dividend_curve.step_forward_rates(time_grid)
-        else:
-            dividend_forwards = np.zeros(num_steps, dtype=float)
 
         growth = np.exp((forward_rates - dividend_forwards) * delta_t)
         too_low = growth <= d
