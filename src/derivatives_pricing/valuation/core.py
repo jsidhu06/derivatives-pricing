@@ -760,6 +760,25 @@ class OptionValuation:
         -------
         float
             Value change per day.
+
+        Notes
+        -----
+        On a flat curve every method agrees.  On a sloped curve they use
+        different rates for the ``r V`` and carry terms, so they differ:
+
+        - Analytical (vanilla and barrier) and Monte Carlo pathwise /
+          likelihood-ratio theta use the zero rates to maturity, the
+          flat-equivalent rates of the closed-form price (QuantLib's
+          ``BlackCalculator::theta`` does the same).
+        - Tree and PDE theta use the forward rates at the start of the
+          curve: the one-day decay with today's calendar curve held fixed
+          (QuantLib's FD engines do the same).
+        - Numerical theta moves the pricing date and keeps the curve, which
+          is defined by time from the pricing date, so the curve slides
+          with it: each tenor keeps its zero rate, and the decay picks up
+          the forward rate at maturity.
+
+        One convention across all methods is planned.
         """
         # BSM analytical barrier theta: use the Black-Scholes PDE identity
         # (θ = rV − (r−q)Sδ − ½σ²S²γ) via the engine impl rather than a

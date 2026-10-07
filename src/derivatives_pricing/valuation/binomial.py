@@ -381,7 +381,10 @@ class _BinomialValuationBase:
             \\Theta = \\frac{f_{ud} - f_0}{2\\Delta t}
 
         where :math:`f_{ud}` is the central node at step 2 and :math:`f_0`
-        the root value.  Returned per **calendar day** (divided by 365).
+        the root value.  The tree steps use the curves' forward rates, so
+        this is the decay with the calendar curve held fixed (see
+        :meth:`OptionValuation.theta`).  Returned per **calendar day**
+        (divided by 365).
         """
         if self._effective_num_steps() < 2:
             raise ValidationError("Tree theta requires num_steps >= 2.")

@@ -483,6 +483,10 @@ class _AnalyticalBarrierValuation:
         the identity returns ``r·R/365``), so this method may assume the
         barrier is alive at pricing date.
 
+        ``r`` and ``q`` are the zero rates to maturity, as in the closed-form
+        price; see :meth:`OptionValuation.theta` for the other methods'
+        conventions on a sloped curve.
+
         Returned per **calendar day**
         """
         ctx = self.valuation_ctx
