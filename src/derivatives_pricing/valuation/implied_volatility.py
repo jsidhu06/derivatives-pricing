@@ -50,8 +50,9 @@ class ImpliedVolResult:
         conditioning check, each numerical-vega bump counted. For tree and
         PDE engines this, not ``iterations``, measures the cost.
     well_determined
-        True when vega at the solution is at least ``min_vega``, i.e. the
-        price actually pins the volatility down. A converged but not
+        True when the solve converged and vega at the solution is at least
+        ``min_vega``, i.e. the price actually pins the volatility down;
+        False for a result that did not converge. A converged but not
         well-determined result reprices the target, yet small rounding in
         the price would move it a lot (far out of the money, near intrinsic).
     """
@@ -60,7 +61,7 @@ class ImpliedVolResult:
     iterations: int
     converged: bool
     function_evaluations: int = 0
-    well_determined: bool = True
+    well_determined: bool = False
 
 
 def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, float]:
@@ -356,8 +357,8 @@ def implied_volatility(
     -------
     ImpliedVolResult
         ``converged`` reports the root finder; ``well_determined`` reports
-        whether the price identifies the vol. Use the vol only when both
-        are true.
+        whether the price identifies the vol, and is False when the solve
+        did not converge. Use the vol only when ``well_determined`` is True.
     """
     _validate_problem(valuation, target_price, vol_bounds, tol, max_iter, initial_vol, min_vega)
     low, high = vol_bounds
@@ -432,9 +433,9 @@ def implied_volatility(
                 max_iter=max_iter,
             )
 
-    well_determined = True
-    if result.converged:
-        well_determined = _is_well_determined(valuation, result.implied_vol, vega_of, min_vega)
+    well_determined = result.converged and _is_well_determined(
+        valuation, result.implied_vol, vega_of, min_vega
+    )
     result = ImpliedVolResult(
         implied_vol=result.implied_vol,
         iterations=result.iterations,

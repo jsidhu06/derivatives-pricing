@@ -396,6 +396,8 @@ def test_implied_volatility_brent_reports_non_convergence_instead_of_raising():
         target_price, valuation, method=ImpliedVolMethod.BRENTQ, tol=1.0e-14, max_iter=3
     )
     assert not result.converged
+    # An unconverged vol is not a usable answer, however steep the price.
+    assert not result.well_determined
 
 
 def test_implied_volatility_rejects_non_positive_tolerances():
