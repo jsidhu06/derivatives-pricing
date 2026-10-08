@@ -506,3 +506,62 @@ class TestMCGreekMethodAgreement:
         assert np.isclose(pw, num, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs NUM {num:.6f}"
         if lr is not None:
             assert np.isclose(pw, lr, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs LR {lr:.6f}"
+
+
+# ---------------------------------------------------------------------------
+# Bias bounded by the sampling error
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+def test_pathwise_and_lr_greeks_are_unbiased_against_bsm(option_type):
+    """Tolerances come from the sampling error, not a fixed percentage: each
+    estimator is averaged over 32 independent seeds and the mean must sit
+    within 4 standard errors (seed-to-seed sd / sqrt(32)) of the closed form.
+    The bound is 0.2-1% of the Greek for delta, rho and pathwise vega/theta,
+    so a 1% bias fails there; the noisier pathwise gamma and LR vega/theta
+    get 2-3.5%."""
+    pricing_date, maturity = dt.datetime(2025, 1, 1), dt.datetime(2026, 1, 1)
+    market_data = MarketData(pricing_date, flat_curve(pricing_date, maturity, 0.05), currency="USD")
+    spec = VanillaSpec(
+        option_type=option_type,
+        exercise_type=ExerciseType.EUROPEAN,
+        strike=100.0,
+        maturity=maturity,
+    )
+    bsm = OptionValuation(
+        UnderlyingData(initial_value=100.0, volatility=0.20, market_data=market_data),
+        spec,
+        PricingMethod.ANALYTICAL,
+    )
+    process = GBMProcess(
+        market_data,
+        GBMParams(initial_value=100.0, volatility=0.20),
+        SimulationConfig(paths=20_000, num_steps=26, end_date=maturity),
+    )
+    pathwise, lr = GreekCalculationMethod.PATHWISE, GreekCalculationMethod.LIKELIHOOD_RATIO
+    cases = [
+        ("delta", pathwise),
+        ("gamma", pathwise),
+        ("vega", pathwise),
+        ("theta", pathwise),
+        ("rho", pathwise),
+        ("delta", lr),
+        ("vega", lr),
+        ("theta", lr),
+        ("rho", lr),
+    ]
+    num_seeds = 32
+    samples = np.empty((num_seeds, len(cases)))
+    for i, seed in enumerate(range(1, num_seeds + 1)):
+        mc = OptionValuation(
+            process, spec, PricingMethod.MONTE_CARLO, MonteCarloParams(random_seed=seed)
+        )
+        samples[i] = [getattr(mc, greek)(greek_calc_method=method) for greek, method in cases]
+
+    means = samples.mean(axis=0)
+    se_of_mean = samples.std(axis=0, ddof=1) / np.sqrt(num_seeds)
+    for (greek, method), mean, se in zip(cases, means, se_of_mean, strict=True):
+        reference = getattr(bsm, greek)()
+        assert abs(mean - reference) < 4.0 * se, (method.value, greek, mean, reference, se)
