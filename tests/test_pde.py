@@ -528,6 +528,64 @@ def test_pde_fd_barrier_equivalence_european(scenario):
             assert np.isclose(pv, baseline, rtol=0.015)
 
 
+_PARITY_MONITORING_CONFIGS = [
+    pytest.param(
+        BarrierMonitoring.CONTINUOUS,
+        None,
+        None,
+        id="continuous",
+    ),
+    # Continuous monitoring + discrete divs: parity-safe baseline for
+    # the discrete-dividend jump path before any monitoring reset.
+    pytest.param(
+        BarrierMonitoring.CONTINUOUS,
+        None,
+        [
+            (dt.datetime(2025, 3, 15), 1.0),
+            (dt.datetime(2025, 6, 15), 1.0),
+            (dt.datetime(2025, 9, 15), 1.0),
+            (dt.datetime(2025, 12, 15), 1.0),
+        ],
+        id="continuous_discrete_divs",
+    ),
+    # Discrete monitoring + discrete divs on non-coincident dates:
+    # isolates the discrete monitoring codepath from the
+    # reset-vs-divjump ordering interaction.
+    pytest.param(
+        BarrierMonitoring.DISCRETE,
+        [dt.datetime(2025, m, 28) for m in range(1, 13)],
+        [
+            (dt.datetime(2025, 3, 15), 1.0),
+            (dt.datetime(2025, 6, 15), 1.0),
+            (dt.datetime(2025, 9, 15), 1.0),
+            (dt.datetime(2025, 12, 15), 1.0),
+        ],
+        id="discrete_noncoincident_divs",
+    ),
+    # Discrete monitoring + discrete divs coincident on monitoring
+    # dates: regression case for the KO ordering fix (reset on ex-div
+    # surface before divjump).  Pre-fix this disagreed with direct KI
+    # by ~0.1–3.5% (3 of the 4 cases outside rtol=0.003); post-fix it
+    # agrees to 5e-6–3e-4.
+    pytest.param(
+        BarrierMonitoring.DISCRETE,
+        [dt.datetime(2025, m, 28) for m in range(1, 13)],
+        [
+            (dt.datetime(2025, 3, 28), 1.0),
+            (dt.datetime(2025, 6, 28), 1.0),
+            (dt.datetime(2025, 9, 28), 1.0),
+            (dt.datetime(2025, 12, 28), 1.0),
+        ],
+        id="discrete_coincident_divs",
+    ),
+]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "monitoring,monitoring_dates,discrete_dividends",
+    _PARITY_MONITORING_CONFIGS,
+)
 @pytest.mark.parametrize(
     "option_type,strike,direction,barrier,rebate",
     [
@@ -545,10 +603,20 @@ def test_pde_fd_barrier_european_ki_parity_matches_direct(
     direction: BarrierDirection,
     barrier: float,
     rebate: float,
+    monitoring: BarrierMonitoring,
+    monitoring_dates: list[dt.datetime] | None,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None,
 ):
-    """European KI parity pricing should closely track the direct KI PDE solve."""
+    """European KI parity pricing should closely track the direct KI PDE solve.
+
+    Covers continuous and discrete monitoring crossed with continuous
+    or discrete dividends, including the coincident-date regression
+    case for the KO core ordering fix.  Dividend mechanism is mutually
+    exclusive: ``dividend_curve`` for the continuous case,
+    ``discrete_dividends`` (with no continuous curve) for the rest.
+    """
     curve_r = DiscountCurve.flat(0.05, 2)
-    curve_q = DiscountCurve.flat(0.03, 2)
+    curve_q = DiscountCurve.flat(0.03, 2) if discrete_dividends is None else None
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2025, 12, 31)
 
@@ -558,6 +626,7 @@ def test_pde_fd_barrier_european_ki_parity_matches_direct(
         volatility=0.25,
         market_data=md,
         dividend_curve=curve_q,
+        discrete_dividends=discrete_dividends,
     )
     barrier_spec = BarrierSpec(
         option_type=option_type,
@@ -567,7 +636,8 @@ def test_pde_fd_barrier_european_ki_parity_matches_direct(
         barrier=barrier,
         direction=direction,
         action=BarrierAction.IN,
-        monitoring=BarrierMonitoring.CONTINUOUS,
+        monitoring=monitoring,
+        monitoring_dates=monitoring_dates,
         rebate=rebate,
         rebate_timing=RebateTiming.AT_EXPIRY,
     )
@@ -583,9 +653,77 @@ def test_pde_fd_barrier_european_ki_parity_matches_direct(
     impl = _FDBarrierValuation(valuation)
 
     parity_price = impl.present_value()
-    direct_price = _fd_barrier_ki_core(**impl._base_solve_args())[0]
+    direct_price = float(_fd_barrier_ki_core(**impl._base_solve_args())[0])
+
+    abs_diff = abs(parity_price - direct_price)
+    rel_diff = abs_diff / max(abs(direct_price), 1e-12)
+    div_label = (
+        "continuous_q" if discrete_dividends is None else f"{len(discrete_dividends)}_discrete_divs"
+    )
+    logger.info(
+        "KI parity vs direct [%s/%s K=%g H=%g rebate=%g monitoring=%s divs=%s]: "
+        "parity=%.6f direct=%.6f abs_diff=%.2e rel_diff=%.2e",
+        option_type.value,
+        direction.value,
+        strike,
+        barrier,
+        rebate,
+        monitoring.value,
+        div_label,
+        parity_price,
+        direct_price,
+        abs_diff,
+        rel_diff,
+    )
 
     assert np.isclose(parity_price, direct_price, rtol=0.003)
+
+
+@pytest.mark.parametrize(
+    "option_type,direction,barrier",
+    [
+        pytest.param(OptionType.PUT, BarrierDirection.DOWN, 90.0, id="down_out_put"),
+        pytest.param(OptionType.CALL, BarrierDirection.DOWN, 90.0, id="down_out_call"),
+        pytest.param(OptionType.PUT, BarrierDirection.UP, 105.0, id="up_out_put"),
+    ],
+)
+def test_pde_fd_barrier_fixing_on_ex_date_sees_ex_dividend_price(option_type, direction, barrier):
+    """On a date that is both an ex-date and a monitoring date, the dividend
+    goes ex first and the barrier observes the price after the drop. A
+    knock-out fixed on the ex-dates must therefore match one fixed a minute
+    later, not a minute earlier. Before the KO core reset the barrier on the
+    ex-div surface, it matched the earlier (cum-div) fixing and was off by
+    4-64% on these cases."""
+    pricing_date = dt.datetime(2025, 1, 1)
+    maturity = dt.datetime(2025, 12, 31)
+    ex_dates = [dt.datetime(2025, m, 28) for m in (3, 6, 9, 12)]
+    ud = UnderlyingData(
+        initial_value=96.0,
+        volatility=0.25,
+        market_data=MarketData(pricing_date, DiscountCurve.flat(0.05), currency="USD"),
+        discrete_dividends=[(d, 2.0) for d in ex_dates],
+    )
+    params = PDEParams(spot_steps=600, time_steps=600, space_grid=PDESpaceGrid.LOG_SPOT)
+
+    def knock_out(shift: dt.timedelta) -> float:
+        spec = BarrierSpec(
+            option_type=option_type,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=100.0,
+            maturity=maturity,
+            barrier=barrier,
+            direction=direction,
+            action=BarrierAction.OUT,
+            monitoring=BarrierMonitoring.DISCRETE,
+            monitoring_dates=[d + shift for d in ex_dates],
+        )
+        return OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
+
+    on_ex_date = knock_out(dt.timedelta(0))
+    after = knock_out(dt.timedelta(minutes=1))
+    before = knock_out(dt.timedelta(minutes=-1))
+    assert np.isclose(on_ex_date, after, rtol=1e-4, atol=0.0), (on_ex_date, after)
+    assert abs(on_ex_date - before) > 0.03 * abs(after), (on_ex_date, before)
 
 
 def test_pde_fd_barrier_european_ki_rebate_grid_matches_direct_near_spot():
