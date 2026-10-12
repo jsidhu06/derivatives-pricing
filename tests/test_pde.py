@@ -89,6 +89,23 @@ def test_pde_fd_grid_method_equivalence_european():
             assert np.isclose(pv, baseline, rtol=0.005)
 
 
+@pytest.mark.parametrize("space_grid", [PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT])
+def test_pde_fd_numerical_greeks_reuse_base_grid_domain(space_grid):
+    """Bumped legs of a numerical PDE Greek are solved on the base valuation's domain.
+
+    Regression: the auto domain is sized from the volatility and the forward,
+    so the two legs of a vega or rho bump were solved on different grids and
+    the difference in grid error biased the Greek (vega by 1%, rho by 1.5%
+    here on the spot grid).
+    """
+    ud = underlying()
+    sp = spec(strike=105.0, option_type=OptionType.CALL)
+    pde = OptionValuation(ud, sp, PricingMethod.PDE_FD, params=PDEParams(space_grid=space_grid))
+    bsm = OptionValuation(ud, sp, PricingMethod.BSM)
+    assert np.isclose(pde.vega(), bsm.vega(), rtol=1e-3)
+    assert np.isclose(pde.rho(), bsm.rho(), rtol=1e-3)
+
+
 def test_pde_fd_grid_method_equivalence_american():
     """PDE FD American variants should be in the same neighborhood."""
     q_curve = flat_curve(PRICING_DATE, MATURITY, 0.0)
