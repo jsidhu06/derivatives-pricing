@@ -148,6 +148,23 @@ def _fitted_vanilla_domain(
     return smin, smax
 
 
+def _fixed_span_domain(
+    *,
+    spot: float,
+    strike: float | None,
+    smax_mult: float,
+    space_grid: PDESpaceGrid,
+) -> tuple[float, float]:
+    """Return the fixed ``smax_mult`` span around ``max(S, K)`` (``S`` without a strike).
+
+    ``[0, smax_mult * ref]`` on the spot grid and
+    ``[ref / smax_mult, smax_mult * ref]`` on the log grid.
+    """
+    ref = max(spot, strike) if strike is not None else spot
+    smin = 0.0 if space_grid is PDESpaceGrid.SPOT else max(ref / smax_mult, 1.0e-8)
+    return smin, smax_mult * ref
+
+
 def _barrier_domain(
     *,
     spot: float,
@@ -1764,6 +1781,49 @@ class _FDValuationBase(_FDGridGreeksMixin):
             self._solve_result = self._compute_solve()
             return self._solve_result
 
+    def _grid_domain(self) -> tuple[float, float]:
+        """Far-field ``(smin, smax)`` targets of the spatial grid.
+
+        The domain inherited from the valuation this one was bumped from, if
+        any. Otherwise, with ``smax_mult=None``, vanillas get the domain sized
+        to sigma*sqrt(T); custom payoffs keep the fixed span (their affine
+        boundary models are fitted to the payoff wings), as does an explicit
+        ``smax_mult``.
+        """
+        inherited = self.valuation_ctx._inherited_pde_domain
+        if inherited is not None:
+            return inherited
+        params = self.pde_params
+        spot = float(self.underlying.initial_value)
+        strike = self.valuation_ctx.strike
+        if params.smax_mult is None and not isinstance(self.valuation_ctx.spec, PayoffSpec):
+            time_to_maturity = float(self.valuation_ctx._maturity_year_fraction())
+            return _fitted_vanilla_domain(
+                spot=spot,
+                strike=float(strike),
+                log_forward=_log_forward(
+                    spot=spot,
+                    time_to_maturity=time_to_maturity,
+                    discount_curve=self.valuation_ctx.discount_curve,
+                    dividend_curve=self.underlying.dividend_curve,
+                    dividend_schedule=_dividend_tau_schedule(
+                        discrete_dividends=self.underlying.discrete_dividends,
+                        pricing_date=self.valuation_ctx.pricing_date,
+                        maturity=self.valuation_ctx.maturity,
+                        day_count_convention=self.valuation_ctx.day_count_convention,
+                    ),
+                ),
+                time_to_maturity=time_to_maturity,
+                volatility=float(self.underlying.volatility),
+                space_grid=params.space_grid,
+            )
+        return _fixed_span_domain(
+            spot=spot,
+            strike=float(strike) if strike is not None else None,
+            smax_mult=_DEFAULT_SMAX_MULT if params.smax_mult is None else float(params.smax_mult),
+            space_grid=params.space_grid,
+        )
+
     def _compute_solve(self) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
         """Run the PDE finite-difference solve."""
         params = self.pde_params
@@ -1815,25 +1875,7 @@ class _FDValuationBase(_FDGridGreeksMixin):
             custom_payoff = None
             custom_boundary_model = None
 
-        # smax_mult=None: vanillas get the domain sized to sigma*sqrt(T); custom
-        # payoffs keep the legacy span (their affine boundary models are fitted
-        # to the payoff wings). An explicit smax_mult is the legacy domain.
-        domain = None
-        if params.smax_mult is None and custom_payoff is None:
-            domain = _fitted_vanilla_domain(
-                spot=spot,
-                strike=float(strike),
-                log_forward=_log_forward(
-                    spot=spot,
-                    time_to_maturity=float(time_to_maturity),
-                    discount_curve=discount_curve,
-                    dividend_curve=dividend_curve,
-                    dividend_schedule=dividend_schedule,
-                ),
-                time_to_maturity=float(time_to_maturity),
-                volatility=volatility,
-                space_grid=params.space_grid,
-            )
+        domain = self._grid_domain()
 
         return _fd_core(
             spot=spot,
@@ -2950,6 +2992,10 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         j = _FDGridGreeksMixin._spot_grid_index(S, spot)
         return self._grid_theta_bs_identity(S, V, j, spot, last_dtau)
 
+    def _grid_domain(self) -> tuple[float, float]:
+        """Far-field ``(smin, smax)`` targets of the barrier grids."""
+        return self._base_solve_args()["domain"]
+
     def _base_solve_args(self) -> dict:
         """Build keyword arguments shared by both KO and KI solvers."""
         params = self.pde_params
@@ -2980,21 +3026,24 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         spot = float(self.underlying.initial_value)
         strike = float(spec.strike)
         volatility = float(self.underlying.volatility)
-        domain = _barrier_domain(
-            spot=spot,
-            strike=strike,
-            log_forward=_log_forward(
+        # A bump-and-revalue copy reuses the domain of the valuation it came from.
+        domain = ctx._inherited_pde_domain
+        if domain is None:
+            domain = _barrier_domain(
                 spot=spot,
+                strike=strike,
+                log_forward=_log_forward(
+                    spot=spot,
+                    time_to_maturity=time_to_maturity,
+                    discount_curve=ctx.discount_curve,
+                    dividend_curve=self.underlying.dividend_curve,
+                    dividend_schedule=dividend_schedule,
+                ),
                 time_to_maturity=time_to_maturity,
-                discount_curve=ctx.discount_curve,
-                dividend_curve=self.underlying.dividend_curve,
-                dividend_schedule=dividend_schedule,
-            ),
-            time_to_maturity=time_to_maturity,
-            volatility=volatility,
-            smax_mult=params.smax_mult,
-            space_grid=params.space_grid,
-        )
+                volatility=volatility,
+                smax_mult=params.smax_mult,
+                space_grid=params.space_grid,
+            )
         return dict(
             spot=spot,
             strike=strike,

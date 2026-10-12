@@ -324,6 +324,9 @@ class OptionValuation:
 
         # --- store private state ---
         self._spec = spec
+        # PDE far-field domain inherited from the valuation this one is a
+        # bump-and-revalue copy of (set by ``_build_valuation``).
+        self._inherited_pde_domain: tuple[float, float] | None = None
 
         # Validate pricing_method early — comparisons rely on enum identity
         if not isinstance(pricing_method, PricingMethod):
@@ -1848,9 +1851,20 @@ class OptionValuation:
         underlying,
         spec: OptionSpec | None = None,
     ) -> OptionValuation:
-        return OptionValuation(
+        """Bump-and-revalue copy of this valuation on a bumped underlying.
+
+        A PDE copy inherits this valuation's far-field domain. The domain is
+        otherwise sized from the spot, volatility, forward and maturity, so
+        bumping any of them would move the grid and its discretisation error
+        would leak into the finite-difference Greek.
+        """
+        bumped = OptionValuation(
             underlying=underlying,
             spec=spec if spec is not None else self._spec,
             pricing_method=self._pricing_method,
             params=self._params,
         )
+        grid_domain = getattr(self._impl, "_grid_domain", None)
+        if grid_domain is not None:
+            bumped._inherited_pde_domain = grid_domain()
+        return bumped
