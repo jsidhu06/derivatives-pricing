@@ -284,8 +284,7 @@ def _me_market_data(
     dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> MarketData:
     if r_curve is None:
-        ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
-        r_curve = DiscountCurve.flat(_ME_RATE, end_time=ttm)
+        r_curve = DiscountCurve.flat(_ME_RATE)
     return MarketData(PRICING_DATE, r_curve, currency=CURRENCY, day_count_convention=dcc)
 
 
@@ -404,8 +403,7 @@ def _dp_price(
 )
 def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield, dcc):
     """European vanilla: BSM, PDE, Binomial, MC all match QuantLib analytical."""
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
-    q_curve = DiscountCurve.flat(dividend_yield, end_time=ttm)
+    q_curve = DiscountCurve.flat(dividend_yield)
     ud = _underlying(spot=spot, dividend_curve=q_curve, dcc=dcc)
     gbm = _gbm(spot=spot, dividend_curve=q_curve, dcc=dcc)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
@@ -461,8 +459,7 @@ def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
 )
 def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield, dcc):
     """American vanilla: PDE, Binomial, MC all match QuantLib FD."""
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
-    q_curve = DiscountCurve.flat(dividend_yield, end_time=ttm)
+    q_curve = DiscountCurve.flat(dividend_yield)
     ud = _underlying(spot=spot, dividend_curve=q_curve, dcc=dcc)
     gbm = _gbm(spot=spot, dividend_curve=q_curve, dcc=dcc)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
@@ -1214,8 +1211,7 @@ def _dp_asian_market_data(
     r_curve: DiscountCurve | None = None,
     dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> MarketData:
-    ttm = calculate_year_fraction(PRICING_DATE, _ASIAN_MATURITY, dcc)
-    curve = r_curve if r_curve is not None else DiscountCurve.flat(_ASIAN_RATE, end_time=ttm)
+    curve = r_curve if r_curve is not None else DiscountCurve.flat(_ASIAN_RATE)
     return MarketData(PRICING_DATE, curve, currency=CURRENCY, day_count_convention=dcc)
 
 
@@ -1681,9 +1677,8 @@ def _barrier_resolved_curves(
     r_curve: DiscountCurve | None = None,
     q_curve: DiscountCurve | None = None,
 ) -> tuple[DiscountCurve, DiscountCurve]:
-    ttm = calculate_year_fraction(PRICING_DATE, _BARRIER_MATURITY)
-    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
-    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV, end_time=ttm)
+    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE)
+    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV)
     return rc, qc
 
 
@@ -2778,8 +2773,7 @@ def test_barrier_european_discrete_divs_pde_vs_quantlib(
         (PRICING_DATE + dt.timedelta(days=270), 2.0),
     ]
 
-    ttm = calculate_year_fraction(PRICING_DATE, _BARRIER_MATURITY)
-    rc = DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
+    rc = DiscountCurve.flat(_BARRIER_RATE)
     md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
     ud = UnderlyingData(
         initial_value=_BARRIER_SPOT,
@@ -2864,8 +2858,7 @@ def test_barrier_european_boundary_date_discrete_divs_pde_vs_quantlib(
         (_BARRIER_MATURITY, maturity_div),
     ]
 
-    ttm = calculate_year_fraction(PRICING_DATE, _BARRIER_MATURITY)
-    rc = DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
+    rc = DiscountCurve.flat(_BARRIER_RATE)
     md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
     ud = UnderlyingData(
         initial_value=_BARRIER_SPOT,

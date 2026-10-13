@@ -605,10 +605,8 @@ class TestBarrierAnalyticalPricing:
 
     def test_nonflat_dividend_curve(self):
         """Barrier pricing works with a non-flat dividend curve."""
-        from derivatives_pricing.utils import calculate_year_fraction
 
-        T = calculate_year_fraction(PRICING_DATE, MATURITY)
-        div_curve = DiscountCurve.flat(0.02, end_time=T)
+        div_curve = DiscountCurve.flat(0.02)
         u = _underlying(dividend_curve=div_curve)
 
         pv_in = _price(
@@ -2362,7 +2360,7 @@ class TestBinomialBarrierStencilGuard:
         # Spot 72.4 with UP barrier 73 → step-2 up-up node lands ~exactly
         # on the barrier under Boyle-Lau alignment.  American put deep ITM
         # so early-exercise locks pv = K - S = 7.6, true delta = -1, gamma 0.
-        curve = DiscountCurve.flat(0.05, end_time=2.0)
+        curve = DiscountCurve.flat(0.05)
         self.md = MarketData(
             PRICING_DATE,
             curve,
@@ -3211,9 +3209,8 @@ class TestBinomialDiscreteBarrierHalfStepAlignment:
     def _market(self):
         pricing_date = dt.datetime(2025, 1, 1)
         maturity = pricing_date + dt.timedelta(days=int(round(365 * self._T_YEARS)))
-        ttm = calculate_year_fraction(pricing_date, maturity)
-        curve_r = DiscountCurve.flat(self._R, end_time=ttm)
-        curve_q = DiscountCurve.flat(self._Q, end_time=ttm)
+        curve_r = DiscountCurve.flat(self._R)
+        curve_q = DiscountCurve.flat(self._Q)
         market = MarketData(pricing_date, curve_r, currency="USD")
         underlying = UnderlyingData(
             initial_value=self._S0,

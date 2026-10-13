@@ -16,7 +16,7 @@ from derivatives_pricing.rates import DiscountCurve
 # ---------------------------------------------------------------------------
 
 PRICING_DATE = dt.datetime(2025, 1, 1)
-CURVE = DiscountCurve.flat(0.05, end_time=1.0)
+CURVE = DiscountCurve.flat(0.05)
 
 
 # ---------------------------------------------------------------------------
