@@ -1103,9 +1103,8 @@ def _dp_barrier_greeks(
     greeks: tuple[str, ...] = _ALL_BARRIER_GREEKS,
 ) -> dict[str, float]:
     """Compute the requested barrier Greeks via a selected DP pricing engine."""
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
-    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV, end_time=ttm)
+    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE)
+    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV)
     md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
     ud = UnderlyingData(
         initial_value=spot,
@@ -1146,9 +1145,8 @@ def _make_barrier_valuation(
     q_curve: DiscountCurve | None = None,
 ) -> OptionValuation:
     """Build a barrier valuation with the shared test-market defaults."""
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
-    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV, end_time=ttm)
+    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE)
+    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV)
     md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
     ud = UnderlyingData(
         initial_value=spot,
@@ -1398,7 +1396,7 @@ def test_knock_out_triggered_at_inception_default_greeks_match_fixed_expiry_reba
     )
 
     ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    discount_factor = float(DiscountCurve.flat(_BARRIER_RATE, end_time=ttm).df(ttm))
+    discount_factor = float(DiscountCurve.flat(_BARRIER_RATE).df(ttm))
     expected_pv = rebate * discount_factor
     expected_theta = rebate * discount_factor * _BARRIER_RATE / 365.0
     expected_rho = -expected_pv * ttm * 0.01
@@ -1739,9 +1737,8 @@ def _dp_barrier_mc_greeks(
     greeks: tuple[str, ...] = _ALL_BARRIER_GREEKS,
 ) -> dict[str, float]:
     """Compute requested barrier greeks via Monte Carlo (GBMProcess underlying)."""
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    rc = DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
-    qc = DiscountCurve.flat(_BARRIER_DIV, end_time=ttm)
+    rc = DiscountCurve.flat(_BARRIER_RATE)
+    qc = DiscountCurve.flat(_BARRIER_DIV)
     md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
     gbm = GBMProcess(
         md,

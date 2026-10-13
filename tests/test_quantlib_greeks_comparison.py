@@ -100,8 +100,7 @@ def _market_data(
     dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> MarketData:
     if discount_curve is None:
-        ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
-        discount_curve = DiscountCurve.flat(RISK_FREE, end_time=ttm)
+        discount_curve = DiscountCurve.flat(RISK_FREE)
     return market_data(
         pricing_date=PRICING_DATE,
         discount_curve=discount_curve,
@@ -405,7 +404,7 @@ def _resolve_curve(
     ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
     if kind == "flat":
         rate = 0.03 if is_dividend else RISK_FREE
-        return DiscountCurve.flat(rate, end_time=ttm)
+        return DiscountCurve.flat(rate)
     if kind == "nonflat":
         forwards = np.array([0.01, 0.02, 0.015]) if is_dividend else np.array([0.03, 0.05, 0.06])
         return DiscountCurve.from_forwards(times=np.array([0.0, 0.25, 0.5, ttm]), forwards=forwards)
@@ -1060,9 +1059,8 @@ def _dp_barrier_greeks(
     greeks: tuple[str, ...] = _QL_BARRIER_COMPARABLE_GREEKS,
 ) -> dict[str, float]:
     """Compute the requested barrier Greeks via a selected DP pricing engine."""
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
-    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV, end_time=ttm)
+    rc = r_curve if r_curve is not None else DiscountCurve.flat(_BARRIER_RATE)
+    qc = q_curve if q_curve is not None else DiscountCurve.flat(_BARRIER_DIV)
     md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
     ud = UnderlyingData(
         initial_value=_BARRIER_SPOT,
@@ -1605,8 +1603,7 @@ def test_barrier_european_discrete_divs_greeks_pde_vs_quantlib(
         (MATURITY, 1.0),
     ]
 
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    rc = DiscountCurve.flat(_BARRIER_RATE, end_time=ttm)
+    rc = DiscountCurve.flat(_BARRIER_RATE)
     md = MarketData(PRICING_DATE, rc, currency=CURRENCY)
     ud = UnderlyingData(
         initial_value=_BARRIER_SPOT,
@@ -1640,7 +1637,7 @@ def test_barrier_european_discrete_divs_greeks_pde_vs_quantlib(
         strike=strike,
         spot=_BARRIER_SPOT,
         vol=_BARRIER_VOL,
-        q_curve=DiscountCurve.flat(0.0, end_time=ttm),
+        q_curve=DiscountCurve.flat(0.0),
         discrete_dividends=discrete_divs,
     )
     opt.NPV()  # trigger Results population before reading greeks

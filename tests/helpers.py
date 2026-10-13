@@ -7,7 +7,6 @@ from derivatives_pricing.enums import DayCountConvention, ExerciseType, OptionTy
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
-from derivatives_pricing.utils import calculate_year_fraction
 from derivatives_pricing.valuation import OptionValuation, UnderlyingData, VanillaSpec
 
 
@@ -29,8 +28,12 @@ def flat_curve(
     maturity: dt.datetime,
     rate: float,
 ) -> DiscountCurve:
-    ttm = calculate_year_fraction(pricing_date, maturity)
-    return DiscountCurve.flat(rate, end_time=ttm)
+    """Flat curve at ``rate``.
+
+    ``pricing_date`` and ``maturity`` are unused: they once sized the curve,
+    and are kept so the existing call sites need not change.
+    """
+    return DiscountCurve.flat(rate)
 
 
 _CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)

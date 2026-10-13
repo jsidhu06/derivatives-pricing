@@ -965,8 +965,8 @@ def test_pde_fd_barrier_equivalence_american(scenario):
 
 def test_european_knock_in_grid_gamma_uses_native_surface_parity():
     """European KI grid gamma should follow vanilla-minus-KO parity."""
-    r_curve = DiscountCurve.flat(0.05, end_time=1.0)
-    q_curve = DiscountCurve.flat(0.02, end_time=1.0)
+    r_curve = DiscountCurve.flat(0.05)
+    q_curve = DiscountCurve.flat(0.02)
     md = MarketData(PRICING_DATE, r_curve, currency="USD")
     ud = UnderlyingData(
         initial_value=100.0,
@@ -1022,8 +1022,8 @@ def test_european_knock_in_grid_gamma_uses_native_surface_parity():
 
 def test_european_knock_in_grid_delta_uses_native_surface_parity():
     """European KI grid delta should follow vanilla-minus-KO parity."""
-    r_curve = DiscountCurve.flat(0.05, end_time=1.0)
-    q_curve = DiscountCurve.flat(0.02, end_time=1.0)
+    r_curve = DiscountCurve.flat(0.05)
+    q_curve = DiscountCurve.flat(0.02)
     md = MarketData(PRICING_DATE, r_curve, currency="USD")
     ud = UnderlyingData(
         initial_value=100.0,
@@ -1069,8 +1069,8 @@ def test_european_knock_in_grid_delta_uses_native_surface_parity():
 
 def test_european_knock_in_grid_theta_uses_native_surface_parity():
     """European KI grid theta should follow vanilla-plus-rebate-minus-KO parity."""
-    r_curve = DiscountCurve.flat(0.05, end_time=1.0)
-    q_curve = DiscountCurve.flat(0.02, end_time=1.0)
+    r_curve = DiscountCurve.flat(0.05)
+    q_curve = DiscountCurve.flat(0.02)
     md = MarketData(PRICING_DATE, r_curve, currency="USD")
     ud = UnderlyingData(
         initial_value=100.0,
