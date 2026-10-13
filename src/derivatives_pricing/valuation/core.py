@@ -726,6 +726,11 @@ class OptionValuation:
             epsilon = 0.01
         vol = self._underlying.volatility
         up = self._bump_underlying(volatility=vol + epsilon)
+        if vol <= epsilon:
+            # No room for the down bump: a volatility cannot be negative, and
+            # zero is degenerate. Forward difference from the current value.
+            up_value = self._build_valuation(underlying=up).present_value()
+            return (up_value - self.present_value()) / epsilon / 100
         dn = self._bump_underlying(volatility=vol - epsilon)
 
         vega = (
