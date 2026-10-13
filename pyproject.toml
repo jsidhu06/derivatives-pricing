@@ -1,6 +1,6 @@
 [project]
 name = "derivatives-pricing"
-version = "0.2.1"
+version = "0.3.0"
 description = "Python package for options pricing and Greeks computation"
 authors = [
     { name = "Jogi Sidhu" }
@@ -35,6 +35,7 @@ dependencies = [
 Homepage = "https://github.com/jsidhu06/derivatives-pricing/"
 Repository = "https://github.com/jsidhu06/derivatives-pricing/"
 Issues = "https://github.com/jsidhu06/derivatives-pricing/issues"
+Changelog = "https://github.com/jsidhu06/derivatives-pricing/blob/main/CHANGELOG.md"
 
 # Optional groups
 [project.optional-dependencies]
