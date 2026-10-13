@@ -45,7 +45,6 @@ from derivatives_pricing.stochastic_processes import (
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.valuation.pde import _FDAmericanValuation
-from helpers import flat_curve
 
 
 class TestVanillaSpec:
@@ -120,7 +119,7 @@ class TestUnderlyingData:
         """Set up market environment for tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_underlying_data_creation(self):
@@ -154,7 +153,7 @@ class TestOptionValuation:
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
         self.strike = 100.0
-        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         # Standard option spec
@@ -485,7 +484,7 @@ class TestOptionValuation:
                 initial_value=100.0,
                 volatility=0.2,
                 market_data=self.market_data,
-                dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.02),
+                dividend_curve=DiscountCurve.flat(0.02),
                 discrete_dividends=[(self.pricing_date + dt.timedelta(days=90), 1.0)],
             )
 
@@ -629,7 +628,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.03),
+            dividend_curve=DiscountCurve.flat(0.03),
         )
         spec = VanillaSpec(
             option_type=OptionType.CALL,
@@ -769,12 +768,12 @@ class TestOptionValuation:
         pricing_date = dt.datetime(2025, 1, 1, 10, 30, 15)
         maturity = dt.datetime(2026, 1, 1, 15, 45, 5)
 
-        md = MarketData(pricing_date, flat_curve(pricing_date, maturity, 0.05), currency="USD")
+        md = MarketData(pricing_date, DiscountCurve.flat(0.05), currency="USD")
         ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=md,
-            dividend_curve=flat_curve(pricing_date, maturity, 0.02),
+            dividend_curve=DiscountCurve.flat(0.02),
         )
         spec = VanillaSpec(
             option_type=OptionType.CALL,
@@ -803,7 +802,7 @@ class TestOptionValuation:
             GBMParams(
                 initial_value=100.0,
                 volatility=0.2,
-                dividend_curve=flat_curve(pricing_date, maturity, 0.02),
+                dividend_curve=DiscountCurve.flat(0.02),
             ),
             SimulationConfig(paths=50_000, num_steps=252, end_date=maturity),
         )
@@ -827,12 +826,12 @@ class TestOptionValuation:
         pricing_date = dt.datetime(2025, 1, 3, 9, 47, 12)
         maturity = dt.datetime(2025, 10, 3, 14, 21, 33)
 
-        md = MarketData(pricing_date, flat_curve(pricing_date, maturity, 0.04), currency="USD")
+        md = MarketData(pricing_date, DiscountCurve.flat(0.04), currency="USD")
         ud = UnderlyingData(
             initial_value=95.0,
             volatility=0.25,
             market_data=md,
-            dividend_curve=flat_curve(pricing_date, maturity, 0.01),
+            dividend_curve=DiscountCurve.flat(0.01),
         )
         spec = VanillaSpec(
             option_type=OptionType.PUT,
@@ -860,7 +859,7 @@ class TestOptionValuation:
             GBMParams(
                 initial_value=95.0,
                 volatility=0.25,
-                dividend_curve=flat_curve(pricing_date, maturity, 0.01),
+                dividend_curve=DiscountCurve.flat(0.01),
             ),
             SimulationConfig(paths=50_000, num_steps=252, end_date=maturity),
         )
@@ -960,7 +959,7 @@ class TestCrossMethodGridAndParamCombos:
         if kind == "none":
             return None
         if kind == "flat":
-            return flat_curve(self.pricing_date, self.maturity, 0.04)
+            return DiscountCurve.flat(0.04)
         if kind == "nonflat":
             return DiscountCurve.from_forwards(
                 times=np.array([0.0, 0.5, 1.0]),
@@ -1014,7 +1013,7 @@ class TestCrossMethodGridAndParamCombos:
     @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
     @pytest.mark.parametrize("div_curve_kind", ["none", "flat"])
     def test_american_cross_method_grid(self, option_type, div_curve_kind):
-        r_curve = flat_curve(self.pricing_date, self.maturity, 0.04)
+        r_curve = DiscountCurve.flat(0.04)
         md = MarketData(self.pricing_date, r_curve, currency=self.currency)
         ud = UnderlyingData(
             initial_value=self.spot,
@@ -1059,7 +1058,7 @@ class TestCrossMethodGridAndParamCombos:
         """Regression degrees and regularization combos should produce finite PVs."""
         md = MarketData(
             self.pricing_date,
-            flat_curve(self.pricing_date, self.maturity, 0.04),
+            DiscountCurve.flat(0.04),
             currency=self.currency,
         )
         gbm = GBMProcess(

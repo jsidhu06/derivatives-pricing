@@ -1,6 +1,7 @@
 import pytest
 import datetime as dt
 import numpy as np
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.exceptions import ValidationError
 from derivatives_pricing.stochastic_processes import (
     PathSimulation,
@@ -13,7 +14,6 @@ from derivatives_pricing.stochastic_processes import (
     SimulationConfig,
 )
 from derivatives_pricing.market_environment import MarketData
-from helpers import flat_curve
 
 
 class TestPathSimulation:
@@ -22,8 +22,7 @@ class TestPathSimulation:
     def test_cannot_instantiate_abstract_class(self):
         """Test that PathSimulation cannot be instantiated directly due to abstract method"""
         pricing_date = dt.datetime(2025, 1, 1)
-        end_date = dt.datetime(2026, 1, 1)
-        curve = flat_curve(pricing_date, end_date, 0.05)
+        curve = DiscountCurve.flat(0.05)
         market_data = MarketData(pricing_date, curve, currency="EUR")
         process_params = GBMParams(initial_value=100.0, volatility=0.2)
         sim_config = SimulationConfig(
@@ -47,7 +46,7 @@ class TestGBMProcess:
         """Set up market environment for GBM tests"""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=36.0, volatility=0.2)
         self.sim_config = SimulationConfig(
@@ -153,8 +152,7 @@ class TestGBMProcess:
         short_rate = 0.05
         volatility = 0.2
         pricing_date = dt.datetime(2025, 1, 1)
-        end_date = dt.datetime(2026, 1, 1)
-        curve = flat_curve(pricing_date, end_date, short_rate)
+        curve = DiscountCurve.flat(short_rate)
         market_data = MarketData(pricing_date, curve, currency="USD")
         process_params = GBMParams(initial_value=100.0, volatility=volatility)
         sim_config = SimulationConfig(
@@ -206,7 +204,7 @@ class TestSRDProcess:
         """Set up market environment for SRD tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = SRDParams(
             initial_value=0.03,
@@ -311,7 +309,7 @@ class TestJDProcess:
         """Set up market environment for Jump Diffusion tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = JDParams(
             initial_value=100.0,
@@ -532,7 +530,7 @@ class TestVarianceReduction:
     def _setup(self):
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
 
@@ -629,7 +627,7 @@ class TestObservationDateFiltering:
     def _setup(self):
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.md = MarketData(self.pricing_date, self.curve, currency="USD")
         self.params = GBMParams(initial_value=100.0, volatility=0.20)
 
@@ -704,7 +702,7 @@ class TestStandardNormalDeterminism:
     def _setup(self):
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = DiscountCurve.flat(0.05)
         self.md = MarketData(self.pricing_date, self.curve, currency="USD")
         self.sim = SimulationConfig(
             paths=10_000,
@@ -738,14 +736,14 @@ class TestStandardNormalDeterminism:
         np.testing.assert_array_equal(self._z(base), self._z(bumped))
 
     def test_rate_bump_preserves_shocks(self):
-        bumped_curve = flat_curve(self.pricing_date, self.end_date, 0.06)
+        bumped_curve = DiscountCurve.flat(0.06)
         bumped_md = MarketData(self.pricing_date, bumped_curve, currency="USD")
         base = GBMProcess(self.md, self.base_params, self.sim)
         bumped = GBMProcess(bumped_md, self.base_params, self.sim)
         np.testing.assert_array_equal(self._z(base), self._z(bumped))
 
     def test_dividend_bump_preserves_shocks(self):
-        div = flat_curve(self.pricing_date, self.end_date, 0.02)
+        div = DiscountCurve.flat(0.02)
         base = GBMProcess(self.md, self.base_params, self.sim)
         bumped = GBMProcess(
             self.md,
@@ -761,7 +759,7 @@ class TestStandardNormalDeterminism:
         unchanged → shocks must still match. The drift/diffusion scaling
         changes; the random shocks do not."""
         bumped_pricing_date = self.pricing_date + dt.timedelta(days=5)
-        bumped_curve = flat_curve(bumped_pricing_date, self.end_date, 0.05)
+        bumped_curve = DiscountCurve.flat(0.05)
         bumped_md = MarketData(bumped_pricing_date, bumped_curve, currency="USD")
         base = GBMProcess(self.md, self.base_params, self.sim)
         bumped = GBMProcess(bumped_md, self.base_params, self.sim)

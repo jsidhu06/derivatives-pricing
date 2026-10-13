@@ -4,9 +4,9 @@ import datetime as dt
 import numpy as np
 import pytest
 
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.enums import OptionType, ExerciseType, PricingMethod
 from derivatives_pricing.market_environment import MarketData
-from helpers import flat_curve
 from derivatives_pricing.valuation import VanillaSpec, UnderlyingData, OptionValuation
 from derivatives_pricing.utils import (
     calculate_year_fraction,
@@ -24,8 +24,8 @@ def test_forward_price_continuous_dividend_curve():
     spot = 100.0
     r = 0.05
     q = 0.02
-    r_curve = flat_curve(pricing_date, maturity, r)
-    q_curve = flat_curve(pricing_date, maturity, q)
+    r_curve = DiscountCurve.flat(r)
+    q_curve = DiscountCurve.flat(q)
 
     fwd = forward_price(
         spot=spot,
@@ -46,7 +46,7 @@ def test_forward_price_discrete_dividends():
     spot = 100.0
     r = 0.05
     dividends = [(dt.datetime(2025, 7, 1), 0.5)]
-    curve = flat_curve(pricing_date, maturity, r)
+    curve = DiscountCurve.flat(r)
 
     fwd = forward_price(
         spot=spot,
@@ -69,8 +69,8 @@ def test_forward_price_yield_and_discrete_dividends_discounts_at_carry():
     ttm = calculate_year_fraction(pricing_date, maturity)
     spot, r, q, amount = 100.0, 0.05, 0.03, 2.0
     ex_date = dt.datetime(2025, 7, 1)
-    r_curve = flat_curve(pricing_date, maturity, r)
-    q_curve = flat_curve(pricing_date, maturity, q)
+    r_curve = DiscountCurve.flat(r)
+    q_curve = DiscountCurve.flat(q)
 
     with pytest.warns(UserWarning, match="Both dividend_curve and discrete_dividends"):
         fwd = forward_price(
@@ -101,9 +101,9 @@ def test_pv_discrete_dividends_from_intermediate_start_discounts_at_carry():
         [(ex_date, 1.0)],
         curve_date=pricing_date,
         end_date=maturity,
-        discount_curve=flat_curve(pricing_date, maturity, r),
+        discount_curve=DiscountCurve.flat(r),
         start_date=start,
-        dividend_curve=flat_curve(pricing_date, maturity, q),
+        dividend_curve=DiscountCurve.flat(q),
     )
     tau = calculate_year_fraction(start, ex_date)
     assert np.isclose(pv, np.exp(-(r - q) * tau), rtol=1e-12)
@@ -115,7 +115,7 @@ def test_put_call_parity_rhs_and_gap():
     spot = 100.0
     strike = 100.0
     r = 0.05
-    curve = flat_curve(pricing_date, maturity, r)
+    curve = DiscountCurve.flat(r)
 
     rhs = put_call_parity_rhs(
         spot=spot,
@@ -148,7 +148,7 @@ def test_put_call_parity_bsm_no_dividend():
     strike = 100.0
     r = 0.05
 
-    curve = flat_curve(pricing_date, maturity, r)
+    curve = DiscountCurve.flat(r)
     market_data = MarketData(pricing_date, curve, currency="USD")
 
     underlying_call = UnderlyingData(
@@ -208,8 +208,8 @@ def test_put_call_parity_bsm_with_dividend_curve():
     r = 0.04
     q = 0.02
 
-    curve = flat_curve(pricing_date, maturity, r)
-    q_curve = flat_curve(pricing_date, maturity, q)
+    curve = DiscountCurve.flat(r)
+    q_curve = DiscountCurve.flat(q)
     market_data = MarketData(pricing_date, curve, currency="USD")
     underlying_call = UnderlyingData(
         initial_value=spot,

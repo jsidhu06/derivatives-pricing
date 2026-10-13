@@ -26,7 +26,7 @@ from conftest import (
     SPOT,
     VOL,
 )
-from helpers import CURRENCY, flat_curve, market_data, pv, spec
+from helpers import CURRENCY, market_data, pv, spec
 from derivatives_pricing.valuation import (
     BarrierSpec,
     MonteCarloParams,
@@ -45,9 +45,7 @@ _MC_RTOL_CROSS_METHOD = 0.03
 
 
 def _market_data(discount_curve: DiscountCurve | None = None):
-    curve = (
-        discount_curve if discount_curve is not None else flat_curve(PRICING_DATE, MATURITY, RATE)
-    )
+    curve = discount_curve if discount_curve is not None else DiscountCurve.flat(RATE)
     return market_data(
         pricing_date=PRICING_DATE,
         discount_curve=curve,
@@ -112,7 +110,7 @@ class TestMCSValuation:
 
     def test_mcs_american_put_supports_immediate_exercise(self):
         """Deep ITM put with tiny vol and high rates should exercise immediately."""
-        high_rate_curve = flat_curve(PRICING_DATE, MATURITY, 0.20)
+        high_rate_curve = DiscountCurve.flat(0.20)
         gbm = _gbm(paths=20_000, spot=40.0, vol=0.01, discount_curve=high_rate_curve)
         am_spec = spec(OptionType.PUT, exercise=ExerciseType.AMERICAN, strike=100.0)
 

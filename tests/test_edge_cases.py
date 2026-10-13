@@ -10,6 +10,7 @@ import warnings
 import numpy as np
 import pytest
 
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.enums import (
     AsianAveraging,
     BarrierAction,
@@ -33,7 +34,6 @@ from derivatives_pricing.stochastic_processes import (
     SimulationConfig,
 )
 from helpers import (
-    flat_curve,
     market_data,
     underlying,
     make_vanilla_spec,
@@ -53,7 +53,7 @@ from derivatives_pricing.valuation.core import OptionValuation
 PRICING_DATE = dt.datetime(2025, 1, 1)
 MATURITY = dt.datetime(2025, 7, 3)  # ~0.5y
 RATE = 0.05
-_DEFAULT_RATE_CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)
+_DEFAULT_RATE_CURVE = DiscountCurve.flat(RATE)
 
 
 def _underlying(
@@ -243,7 +243,7 @@ class TestNearZeroExpiry:
     )
     def test_bsm_near_expiry(self, option_type, strike, expected_intrinsic):
         """BSM with 1-day expiry should be very close to intrinsic."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, self.SHORT_MATURITY, RATE))
+        ud = _underlying(discount_curve=DiscountCurve.flat(RATE))
         spec = _spec(strike=strike, option_type=option_type, maturity=self.SHORT_MATURITY)
         pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isclose(pv, expected_intrinsic, atol=0.50)
@@ -259,7 +259,7 @@ class TestNearZeroExpiry:
     )
     def test_binomial_near_expiry(self, option_type, strike, expected_intrinsic):
         """Binomial with 1-day expiry should be very close to intrinsic."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, self.SHORT_MATURITY, RATE))
+        ud = _underlying(discount_curve=DiscountCurve.flat(RATE))
         spec = _spec(strike=strike, option_type=option_type, maturity=self.SHORT_MATURITY)
         pv = _pv(
             ud,
@@ -280,7 +280,7 @@ class TestNearZeroExpiry:
     )
     def test_pde_near_expiry(self, option_type, strike, expected_intrinsic):
         """PDE with 1-day expiry should be very close to intrinsic."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, self.SHORT_MATURITY, RATE))
+        ud = _underlying(discount_curve=DiscountCurve.flat(RATE))
         spec = _spec(strike=strike, option_type=option_type, maturity=self.SHORT_MATURITY)
         pv = _pv(
             ud,
@@ -294,10 +294,10 @@ class TestNearZeroExpiry:
 def _bsm_market(spot=100.0, vol=0.20, rate=RATE, div_yield=0.0, maturity=MATURITY):
     md = market_data(
         pricing_date=PRICING_DATE,
-        discount_curve=flat_curve(PRICING_DATE, maturity, rate),
+        discount_curve=DiscountCurve.flat(rate),
         currency="USD",
     )
-    q_curve = flat_curve(PRICING_DATE, maturity, div_yield) if div_yield else None
+    q_curve = DiscountCurve.flat(div_yield) if div_yield else None
     return UnderlyingData(
         initial_value=spot, volatility=vol, market_data=md, dividend_curve=q_curve
     )
@@ -607,8 +607,8 @@ class TestExtremeRates:
     def test_high_rate_call_value_increases(self, method):
         """Higher r increases call value (forward price is higher)."""
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
-        ud_low = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.01))
-        ud_high = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.30))
+        ud_low = _underlying(discount_curve=DiscountCurve.flat(0.01))
+        ud_high = _underlying(discount_curve=DiscountCurve.flat(0.30))
 
         pv_low = _pv(ud_low, spec, method, **self._params(method))
         pv_high = _pv(ud_high, spec, method, **self._params(method))
@@ -618,8 +618,8 @@ class TestExtremeRates:
     def test_high_rate_put_value_decreases(self, method):
         """Higher r decreases put value (forward price is higher)."""
         spec = _spec(strike=100.0, option_type=OptionType.PUT)
-        ud_low = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.01))
-        ud_high = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.30))
+        ud_low = _underlying(discount_curve=DiscountCurve.flat(0.01))
+        ud_high = _underlying(discount_curve=DiscountCurve.flat(0.30))
 
         pv_low = _pv(ud_low, spec, method, **self._params(method))
         pv_high = _pv(ud_high, spec, method, **self._params(method))
@@ -627,7 +627,7 @@ class TestExtremeRates:
 
     def test_negative_rate_bsm(self):
         """Negative rates should produce valid (positive) option prices."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, -0.02))
+        ud = _underlying(discount_curve=DiscountCurve.flat(-0.02))
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
             pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
@@ -636,7 +636,7 @@ class TestExtremeRates:
 
     def test_negative_rate_binomial(self):
         """Negative rates should produce valid prices in binomial model."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, -0.02))
+        ud = _underlying(discount_curve=DiscountCurve.flat(-0.02))
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
             pv = _pv(
@@ -650,7 +650,7 @@ class TestExtremeRates:
 
     def test_negative_rate_pde(self):
         """Negative rates should produce valid prices in PDE solver."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, -0.02))
+        ud = _underlying(discount_curve=DiscountCurve.flat(-0.02))
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
             pv = _pv(
@@ -664,7 +664,7 @@ class TestExtremeRates:
 
     def test_very_high_rate_bsm_convergence(self):
         """r = 50% should still produce finite BSM prices."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.50))
+        ud = _underlying(discount_curve=DiscountCurve.flat(0.50))
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
         pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         assert np.isfinite(pv)
@@ -672,7 +672,7 @@ class TestExtremeRates:
 
     def test_bsm_and_binomial_agree_at_extreme_rate(self):
         """BSM and binomial should agree even at r = 25%."""
-        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.25))
+        ud = _underlying(discount_curve=DiscountCurve.flat(0.25))
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
         bsm_pv = _pv(ud, spec, PricingMethod.ANALYTICAL)
         bin_pv = _pv(
@@ -785,7 +785,7 @@ class TestAmericanEdgeCases:
         ud = _underlying(
             spot=spot,
             vol=0.2,
-            dividend_curve=flat_curve(PRICING_DATE, MATURITY, 0.05),
+            dividend_curve=DiscountCurve.flat(0.05),
         )
         spec_eu = _spec(strike=strike, option_type=OptionType.CALL, exercise=ExerciseType.EUROPEAN)
         spec_am = _spec(strike=strike, option_type=OptionType.CALL, exercise=ExerciseType.AMERICAN)
@@ -810,7 +810,7 @@ class TestAmericanEdgeCases:
         ud = _underlying(
             spot=spot,
             vol=0.2,
-            discount_curve=flat_curve(PRICING_DATE, maturity, RATE),
+            discount_curve=DiscountCurve.flat(RATE),
         )
         spec = _spec(
             strike=strike,

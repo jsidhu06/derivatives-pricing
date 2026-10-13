@@ -42,7 +42,6 @@ from derivatives_pricing.valuation import (
     UnderlyingData,
     VanillaSpec,
 )
-from helpers import flat_curve
 
 PRICING_DATE = dt.datetime(2025, 1, 1)
 MATURITY = dt.datetime(2026, 1, 1)
@@ -89,7 +88,7 @@ def _digital_call(S):
 
 
 def _curve() -> DiscountCurve:
-    return flat_curve(PRICING_DATE, MATURITY, RATE)
+    return DiscountCurve.flat(RATE)
 
 
 def _md() -> MarketData:

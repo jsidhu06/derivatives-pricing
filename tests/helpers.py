@@ -23,20 +23,7 @@ RATE = 0.05
 VOL = 0.20
 
 
-def flat_curve(
-    pricing_date: dt.datetime,
-    maturity: dt.datetime,
-    rate: float,
-) -> DiscountCurve:
-    """Flat curve at ``rate``.
-
-    ``pricing_date`` and ``maturity`` are unused: they once sized the curve,
-    and are kept so the existing call sites need not change.
-    """
-    return DiscountCurve.flat(rate)
-
-
-_CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)
+_CURVE = DiscountCurve.flat(RATE)
 _MD = MarketData(
     PRICING_DATE,
     _CURVE,

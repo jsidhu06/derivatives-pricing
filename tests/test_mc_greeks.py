@@ -20,7 +20,6 @@ from derivatives_pricing.stochastic_processes import (
     GBMProcess,
     SimulationConfig,
 )
-from helpers import flat_curve
 
 from derivatives_pricing.valuation import (
     MonteCarloParams,
@@ -54,8 +53,8 @@ class _MCGreekTestBase:
         self.n_paths = 500_000
         self.seed = 42
 
-        self.csr = flat_curve(self.pricing_date, self.maturity, self.rate)
-        self.qcr = flat_curve(self.pricing_date, self.maturity, self.div_yield)
+        self.csr = DiscountCurve.flat(self.rate)
+        self.qcr = DiscountCurve.flat(self.div_yield)
         self.market_data = MarketData(self.pricing_date, self.csr, currency=self.currency)
 
     # ---------- factories ----------
@@ -438,7 +437,7 @@ class TestMCGreekMethodAgreement:
         if spec is None:
             return None
         if spec == "flat":
-            return flat_curve(self.PRICING_DATE, self.MATURITY, default_rate)
+            return DiscountCurve.flat(default_rate)
         # dict with from_forwards kwargs
         return DiscountCurve.from_forwards(**spec)
 
@@ -523,7 +522,7 @@ def test_pathwise_and_lr_greeks_are_unbiased_against_bsm(option_type):
     so a 1% bias fails there; the noisier pathwise gamma and LR vega/theta
     get 2-3.5%."""
     pricing_date, maturity = dt.datetime(2025, 1, 1), dt.datetime(2026, 1, 1)
-    market_data = MarketData(pricing_date, flat_curve(pricing_date, maturity, 0.05), currency="USD")
+    market_data = MarketData(pricing_date, DiscountCurve.flat(0.05), currency="USD")
     spec = VanillaSpec(
         option_type=option_type,
         exercise_type=ExerciseType.EUROPEAN,

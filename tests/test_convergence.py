@@ -10,6 +10,7 @@ import datetime as dt
 import numpy as np
 import pytest
 
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.enums import ExerciseType, OptionType, PricingMethod
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
@@ -21,10 +22,10 @@ from derivatives_pricing.valuation import (
     UnderlyingData,
     VanillaSpec,
 )
-from helpers import PRICING_DATE, flat_curve
+from helpers import PRICING_DATE
 
 _MATURITY = dt.datetime(2026, 1, 1)
-_MARKET = MarketData(PRICING_DATE, flat_curve(PRICING_DATE, _MATURITY, 0.05), currency="USD")
+_MARKET = MarketData(PRICING_DATE, DiscountCurve.flat(0.05), currency="USD")
 _UNDERLYING = UnderlyingData(initial_value=100.0, volatility=0.20, market_data=_MARKET)
 
 pytestmark = pytest.mark.slow

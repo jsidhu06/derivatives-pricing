@@ -23,23 +23,16 @@ class TestDiscountCurveConstruction:
         assert np.isclose(float(curve.df(0.0)), 1.0)
         assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
 
-    def test_flat_curve_default_end_time(self):
-        # No end_time → default to 100y so users don't need to specify.
+    def test_flat_curve_covers_100y_without_warning(self):
         curve = DiscountCurve.flat(rate=0.05)
-        assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
-        assert np.isclose(float(curve.df(50.0)), np.exp(-0.05 * 50.0))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
+            assert np.isclose(float(curve.df(50.0)), np.exp(-0.05 * 50.0))
 
     def test_flat_curve_zero_rate(self):
         curve = DiscountCurve.flat(rate=0.0)
         assert np.isclose(float(curve.df(0.5)), 1.0)
-
-    def test_flat_curve_negative_end_time_raises(self):
-        with pytest.raises(ValidationError, match="end_time must be positive"):
-            DiscountCurve.flat(rate=0.05, end_time=-1.0)
-
-    def test_flat_curve_zero_end_time_raises(self):
-        with pytest.raises(ValidationError, match="end_time must be positive"):
-            DiscountCurve.flat(rate=0.05, end_time=0.0)
 
     def test_non_increasing_times_raises(self):
         with pytest.raises(ValidationError, match="strictly increasing"):
@@ -142,9 +135,9 @@ class TestDiscountCurveDf:
             df_far = float(curve.df(t_far))
         assert np.isclose(df_far, 0.90 * np.exp(-fwd_last * (t_far - 2.0)))
 
-    def test_flat_curve_extrapolates_at_its_rate(self):
-        """A flat curve stays flat past its end (regression: DF used to freeze)."""
-        curve = DiscountCurve.flat(0.05, end_time=1.0)
+    def test_one_year_curve_extrapolates_at_its_rate(self):
+        """A 5% curve ending at 1y stays at 5% beyond it (regression: DF used to freeze)."""
+        curve = DiscountCurve(times=np.array([0.0, 1.0]), dfs=np.array([1.0, np.exp(-0.05)]))
         with pytest.warns(UserWarning, match="Extrapolating"):
             assert np.isclose(float(curve.df(2.0)), np.exp(-0.10))
 
