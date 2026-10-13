@@ -47,7 +47,7 @@ from derivatives_pricing.stochastic_processes import (
 from derivatives_pricing.valuation.pde import _build_log_grid, _build_spot_grid
 from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 from derivatives_pricing.utils import calculate_year_fraction
-from helpers import flat_curve, PRICING_DATE, MATURITY, CURRENCY, SPOT, STRIKE, RATE, VOL
+from helpers import PRICING_DATE, MATURITY, CURRENCY, SPOT, STRIKE, RATE, VOL
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def _market_data(
     rate: float = RATE,
     maturity: dt.datetime = MATURITY,
 ) -> MarketData:
-    curve = flat_curve(pricing_date, maturity, rate)
+    curve = DiscountCurve.flat(rate)
     return MarketData(pricing_date, curve, currency=CURRENCY)
 
 
@@ -680,7 +680,7 @@ class TestBarrierInitialState:
         from derivatives_pricing.utils import calculate_year_fraction
 
         T = calculate_year_fraction(PRICING_DATE, MATURITY)
-        df_r = float(flat_curve(PRICING_DATE, MATURITY, RATE).df(T))
+        df_r = float(DiscountCurve.flat(RATE).df(T))
 
         pv = _price(
             _underlying(spot=120.0),
@@ -991,7 +991,7 @@ class TestBarrierPresentValueAgainstBoyleTianTable3:
     def _paper_market_data() -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(0.10, 2.0),
+            DiscountCurve.flat(0.10),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -1170,7 +1170,7 @@ class TestBarrierPresentValueAgainstBoyleTianTable8:
     def _paper_market_data() -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(0.10, 2.0),
+            DiscountCurve.flat(0.10),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -1377,7 +1377,7 @@ class TestBarrierPresentValueAgainstBroadieGlasserman:
     def _paper_market_data() -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(0.10, 3.0),
+            DiscountCurve.flat(0.10),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -1526,7 +1526,7 @@ class TestBarrierDeltaAgainstBroadieGlasserman:
     def _paper_market_data() -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(0.10, 2.0),
+            DiscountCurve.flat(0.10),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -1659,7 +1659,7 @@ class TestBarrierAmericanKIAgainstDaiKwok:
     def _paper_market_data() -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(0.10, 2.0),
+            DiscountCurve.flat(0.10),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -1670,7 +1670,7 @@ class TestBarrierAmericanKIAgainstDaiKwok:
             initial_value=spot,
             volatility=0.30,
             market_data=cls._paper_market_data(),
-            dividend_curve=DiscountCurve.flat(0.09, 2.0),
+            dividend_curve=DiscountCurve.flat(0.09),
         )
 
     @classmethod
@@ -1814,7 +1814,7 @@ class TestAmericanBarrierDiscreteDividends:
     def _market_data(cls) -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(cls._R, 2.0),
+            DiscountCurve.flat(cls._R),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -2052,7 +2052,7 @@ class TestBarrierGreeksAgainstBoyleTianTable6:
     def _paper_market_data() -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(0.10, 2.0),
+            DiscountCurve.flat(0.10),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -2063,7 +2063,7 @@ class TestBarrierGreeksAgainstBoyleTianTable6:
             initial_value=spot,
             volatility=0.25,
             market_data=cls._paper_market_data(),
-            dividend_curve=DiscountCurve.flat(0.0, 2.0),
+            dividend_curve=DiscountCurve.flat(0.0),
         )
 
     @staticmethod
@@ -2205,7 +2205,7 @@ class TestBarrierGreeksAgainstBoyleTianTable9:
     def _paper_market_data() -> MarketData:
         return MarketData(
             PRICING_DATE,
-            DiscountCurve.flat(0.10, 2.0),
+            DiscountCurve.flat(0.10),
             currency="USD",
             day_count_convention=DayCountConvention.ACT_365F,
         )
@@ -3437,7 +3437,7 @@ class TestBarrierMCInceptionHit:
         from derivatives_pricing.utils import calculate_year_fraction
 
         T = calculate_year_fraction(PRICING_DATE, MATURITY)
-        df = float(flat_curve(PRICING_DATE, MATURITY, RATE).df(T))
+        df = float(DiscountCurve.flat(RATE).df(T))
 
         pv = _mc_price(
             _mc_gbm(spot=120.0),
@@ -3580,7 +3580,7 @@ class TestBarrierPDEAutoDomainHighVol:
     @staticmethod
     def _case(direction, barrier, option_type, action):
         maturity = dt.datetime(2030, 1, 1)
-        md = MarketData(PRICING_DATE, flat_curve(PRICING_DATE, maturity, RATE), currency=CURRENCY)
+        md = MarketData(PRICING_DATE, DiscountCurve.flat(RATE), currency=CURRENCY)
         ud = UnderlyingData(initial_value=SPOT, volatility=0.8, market_data=md)
         spec = _barrier_spec(
             option_type=option_type,

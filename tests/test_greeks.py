@@ -25,7 +25,7 @@ from derivatives_pricing.enums import (
 )
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.rates import DiscountCurve
-from helpers import assert_greeks_close, flat_curve
+from helpers import assert_greeks_close
 from derivatives_pricing.utils import calculate_year_fraction
 from derivatives_pricing.stochastic_processes import (
     GBMParams,
@@ -65,7 +65,7 @@ class TestGreeksSetup:
         self.currency = "USD"
 
         # Discount curve
-        self.csr = flat_curve(self.pricing_date, self.maturity, self.rate)
+        self.csr = DiscountCurve.flat(self.rate)
 
         # Market data + sim_config config for Monte Carlo
         self.market_data = MarketData(self.pricing_date, self.csr, currency=self.currency)
@@ -104,8 +104,7 @@ class TestGreeksSetup:
     ) -> DiscountCurve | None:
         if dividend_rate == 0.0:
             return None
-        base_date = self.pricing_date if pricing_date is None else pricing_date
-        return flat_curve(base_date, self.maturity, dividend_rate)
+        return DiscountCurve.flat(dividend_rate)
 
     def _make_spec(
         self,
@@ -755,7 +754,7 @@ def _asian_curve(kind: str, *, is_dividend: bool) -> DiscountCurve | None:
         return None
     if kind == "flat":
         rate = 0.03 if is_dividend else 0.05
-        return flat_curve(_PRICING_DATE, _MATURITY, rate)
+        return DiscountCurve.flat(rate)
     if kind == "nonflat":
         return _NONFLAT_Q if is_dividend else _NONFLAT_R
     raise ValueError(f"unsupported curve kind: {kind}")

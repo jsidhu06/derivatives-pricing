@@ -8,6 +8,9 @@ import numpy as np
 
 from .exceptions import ValidationError
 
+# Last knot of ``DiscountCurve.flat``, in years.
+_FLAT_CURVE_END_TIME = 100.0
+
 
 @dataclass(frozen=True, slots=True)
 class DiscountCurve:
@@ -114,26 +117,23 @@ class DiscountCurve:
         return cls(times=times, dfs=dfs)
 
     @classmethod
-    def flat(cls, rate: float, end_time: float = 100.0) -> DiscountCurve:
+    def flat(cls, rate: float) -> DiscountCurve:
         """Build a flat continuously-compounded discount curve.
+
+        The curve is defined on ``[0, 100]`` years, long enough that no
+        realistic maturity extrapolates.
 
         Parameters
         ----------
         rate
             Flat continuously-compounded annual rate.
-        end_time
-            Final maturity in years.  Defaults to 100, large enough to
-            cover any realistic option maturity.  Override only if you
-            have a specific reason to truncate the curve domain.
 
         Returns
         -------
         DiscountCurve
             Discount curve consistent with the supplied flat rate.
         """
-        if end_time <= 0.0:
-            raise ValidationError("end_time must be positive")
-        times = np.array([0.0, float(end_time)])
+        times = np.array([0.0, _FLAT_CURVE_END_TIME])
         dfs = np.exp(-float(rate) * times)
         return cls(times=times, dfs=dfs)
 

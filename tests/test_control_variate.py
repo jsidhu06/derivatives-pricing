@@ -6,6 +6,7 @@ import logging
 import numpy as np
 import pytest
 
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.enums import (
     AsianAveraging,
     ExerciseType,
@@ -16,7 +17,6 @@ from helpers import (
     PRICING_DATE,
     MATURITY,
     CURRENCY,
-    flat_curve,
     market_data,
     underlying,
     spec,
@@ -41,7 +41,7 @@ def _underlying(
 ):
     md = market_data(
         pricing_date=PRICING_DATE,
-        discount_curve=flat_curve(PRICING_DATE, maturity, rate),
+        discount_curve=DiscountCurve.flat(rate),
         currency=CURRENCY,
     )
     return underlying(
@@ -209,7 +209,7 @@ class TestAsianControlVariate:
 
     def test_cv_matches_manual_adjustment(self):
         """CV-adjusted price = raw_american + (analytical_european − hull_european)."""
-        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
+        q_curve = DiscountCurve.flat(0.02)
         ud = _underlying(
             initial_value=100,
             volatility=0.25,
@@ -277,7 +277,7 @@ class TestAsianControlVariate:
 
     def test_cv_geq_european_analytical(self):
         """CV-adjusted American Asian ≥ European analytical (early exercise premium ≥ 0)."""
-        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
+        q_curve = DiscountCurve.flat(0.02)
         ud = _underlying(
             initial_value=100,
             volatility=0.25,
@@ -330,7 +330,7 @@ class TestAsianControlVariate:
     def test_cv_reduces_european_bias(self, spot, strike, vol, r, q, days, option_type):
         """For European exercise, CV should eliminate the Hull tree bias entirely."""
         maturity = PRICING_DATE + dt.timedelta(days=days)
-        q_curve = flat_curve(PRICING_DATE, maturity, q) if q else None
+        q_curve = DiscountCurve.flat(q) if q else None
         ud = _underlying(
             initial_value=spot,
             volatility=vol,

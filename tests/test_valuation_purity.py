@@ -22,7 +22,6 @@ from derivatives_pricing.enums import (
 )
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.rates import DiscountCurve
-from helpers import flat_curve
 from derivatives_pricing.valuation import VanillaSpec, OptionValuation, UnderlyingData
 from derivatives_pricing.valuation import BinomialParams
 
@@ -84,7 +83,7 @@ def common_setup():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
     rate = 0.05
-    curve = flat_curve(pricing_date, maturity, rate)
+    curve = DiscountCurve.flat(rate)
     return pricing_date, maturity, curve
 
 
@@ -101,7 +100,7 @@ class TestValuationPurityPresentValue:
             vol=0.20,
             pricing_date=pricing_date,
             discount_curve=csr,
-            dividend_curve=flat_curve(pricing_date, maturity, 0.02),
+            dividend_curve=DiscountCurve.flat(0.02),
         )
         spec = _make_spec(option_type=OptionType.CALL, strike=100.0, maturity=maturity)
 

@@ -4,15 +4,15 @@ import datetime as dt
 
 import numpy as np
 
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.enums import OptionType, PricingMethod
 from conftest import (
     PRICING_DATE,
-    MATURITY,
     RATE,
     SPOT,
     STRIKE,
 )
-from helpers import flat_curve, underlying, pv, spec
+from helpers import underlying, pv, spec
 from derivatives_pricing.valuation import (
     VanillaSpec,
     OptionValuation,
@@ -74,7 +74,7 @@ class TestBSMValuation:
 
     def test_bsm_with_dividend_curve(self):
         """Test BSM pricing with dividend curve."""
-        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.03)
+        q_curve = DiscountCurve.flat(0.03)
         sp = spec()
         pv_no_div = _bsm(underlying(), sp)
         pv_with_div = _bsm(underlying(dividend_curve=q_curve), sp)

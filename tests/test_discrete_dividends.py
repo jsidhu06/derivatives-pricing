@@ -15,7 +15,6 @@ from derivatives_pricing.stochastic_processes import (
     SimulationConfig,
 )
 from helpers import (
-    flat_curve,
     market_data,
     underlying,
     spec,
@@ -44,9 +43,7 @@ def _build_case(
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
 ):
     divs = _DIVS if discrete_dividends is None else discrete_dividends
-    rate_curve = (
-        discount_curve if discount_curve is not None else flat_curve(PRICING_DATE, _MATURITY, _RATE)
-    )
+    rate_curve = discount_curve if discount_curve is not None else DiscountCurve.flat(_RATE)
     md = market_data(
         pricing_date=PRICING_DATE,
         discount_curve=rate_curve,
@@ -129,7 +126,7 @@ def test_mixed_yield_and_cash_dividends_put_call_parity_all_models():
         (PRICING_DATE + dt.timedelta(days=90), 2.0),
         (PRICING_DATE + dt.timedelta(days=270), 2.0),
     ]
-    q_curve = flat_curve(PRICING_DATE, _MATURITY, 0.06)
+    q_curve = DiscountCurve.flat(0.06)
     with pytest.warns(UserWarning, match="both dividend_curve and discrete_dividends"):
         md, put_spec, ud, _ = _build_case(dividend_curve=q_curve, discrete_dividends=divs)
     call_spec = dataclasses.replace(put_spec, option_type=OptionType.CALL)

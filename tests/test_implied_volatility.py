@@ -23,7 +23,6 @@ from derivatives_pricing.enums import (
 )
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.rates import DiscountCurve
-from helpers import flat_curve
 from helpers import (
     market_data,
     underlying,
@@ -49,7 +48,7 @@ from derivatives_pricing.valuation.params import BinomialParams, PDEParams
 PRICING_DATE = dt.datetime(2025, 1, 1)
 MATURITY = dt.datetime(2026, 1, 1)
 RATE = 0.05
-_DEFAULT_RATE_CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)
+_DEFAULT_RATE_CURVE = DiscountCurve.flat(RATE)
 
 
 def _build_valuation(
@@ -205,7 +204,7 @@ def test_implied_volatility_rejects_out_of_bounds_price():
 def test_implied_volatility_rejects_monte_carlo():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    curve = flat_curve(pricing_date, maturity, 0.05)
+    curve = DiscountCurve.flat(0.05)
     market_data = MarketData(pricing_date, curve, currency="USD")
     sim_config = SimulationConfig(
         paths=5_000,
@@ -238,7 +237,7 @@ def test_implied_volatility_rejects_monte_carlo():
 def test_implied_volatility_with_dividend_curve():
     true_vol = 0.3
     initial_vol = 0.1
-    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
+    q_curve = DiscountCurve.flat(0.02)
     pricing_valuation = _build_valuation(
         option_type=OptionType.CALL, vol=true_vol, dividend_curve=q_curve
     )
@@ -272,9 +271,7 @@ def test_implied_volatility_with_discrete_dividends():
 def test_implied_volatility_recovers_american_binomial(option_type: OptionType):
     true_vol = 0.3
     initial_vol = 0.12
-    dividend_curve = (
-        flat_curve(PRICING_DATE, MATURITY, 0.02) if option_type is OptionType.CALL else None
-    )
+    dividend_curve = DiscountCurve.flat(0.02) if option_type is OptionType.CALL else None
 
     pricing_valuation = _build_binomial_valuation(
         option_type=option_type,

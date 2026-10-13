@@ -39,7 +39,6 @@ from derivatives_pricing.valuation.pde import (
     _psor_core,
 )
 from helpers import (
-    flat_curve,
     market_data,
     underlying,
     spec,
@@ -53,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 def test_pde_fd_grid_method_equivalence_european():
     """PDE FD variants should be in the same neighborhood for European options."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.01)
+    q_curve = DiscountCurve.flat(0.01)
     ud = underlying(initial_value=100.0, dividend_curve=q_curve)
     sp = spec(strike=100.0, option_type=OptionType.CALL, exercise=ExerciseType.EUROPEAN)
 
@@ -108,7 +107,7 @@ def test_pde_fd_numerical_greeks_reuse_base_grid_domain(space_grid):
 
 def test_pde_fd_grid_method_equivalence_american():
     """PDE FD American variants should be in the same neighborhood."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.0)
+    q_curve = DiscountCurve.flat(0.0)
     ud = underlying(initial_value=95.0, dividend_curve=q_curve)
     sp = spec(strike=100.0, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
 
@@ -161,7 +160,7 @@ class TestPDEGridTheta:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.0)
+        q_curve = DiscountCurve.flat(0.0)
         self.ud = underlying(initial_value=100.0, volatility=0.20, dividend_curve=q_curve)
         self.pde_params = PDEParams(spot_steps=400, time_steps=400)
 
@@ -213,7 +212,7 @@ class TestPDECustomPayoffMethodEquivalence:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.01)
+        q_curve = DiscountCurve.flat(0.01)
         self.ud = underlying(initial_value=100.0, dividend_curve=q_curve)
 
     @pytest.mark.parametrize("payoff_fn", _CUSTOM_PAYOFFS)
@@ -317,7 +316,7 @@ def _forward_curve(*, times: tuple[float, ...], forwards: tuple[float, ...]) -> 
 
 
 def _barrier_pde_value(scenario: dict, params: PDEParams) -> float:
-    r_curve = scenario.get("r_curve") or flat_curve(PRICING_DATE, MATURITY, scenario["rate"])
+    r_curve = scenario.get("r_curve") or DiscountCurve.flat(scenario["rate"])
     q_curve = scenario.get("q_curve")
     md = market_data(pricing_date=PRICING_DATE, discount_curve=r_curve)
     ud = underlying(
@@ -356,7 +355,7 @@ _EUROPEAN_BARRIER_SCENARIOS = [
             "action": BarrierAction.OUT,
             "barrier": 86.0,
             "monitoring": BarrierMonitoring.CONTINUOUS,
-            "q_curve": flat_curve(PRICING_DATE, MATURITY, 0.012),
+            "q_curve": DiscountCurve.flat(0.012),
         },
         id="eu_down_out_call_continuous",
     ),
@@ -392,7 +391,7 @@ _EUROPEAN_BARRIER_SCENARIOS = [
             "rebate": 1.25,
             "rebate_timing": RebateTiming.AT_EXPIRY,
             "num_observations": 12,
-            "q_curve": flat_curve(PRICING_DATE, MATURITY, 0.02),
+            "q_curve": DiscountCurve.flat(0.02),
         },
         id="eu_down_in_call_discrete",
     ),
@@ -410,7 +409,7 @@ _EUROPEAN_BARRIER_SCENARIOS = [
             "monitoring": BarrierMonitoring.DISCRETE,
             "rebate": 2.0,
             "num_observations": 10,
-            "q_curve": flat_curve(PRICING_DATE, MATURITY, 0.005),
+            "q_curve": DiscountCurve.flat(0.005),
         },
         id="eu_up_out_put_discrete_rebate",
     ),
@@ -463,7 +462,7 @@ _AMERICAN_BARRIER_SCENARIOS = [
             "barrier": 119.0,
             "monitoring": BarrierMonitoring.CONTINUOUS,
             "rebate": 3.0,
-            "q_curve": flat_curve(PRICING_DATE, MATURITY, 0.015),
+            "q_curve": DiscountCurve.flat(0.015),
         },
         id="am_up_out_call_rebate_continuous",
     ),
@@ -481,7 +480,7 @@ _AMERICAN_BARRIER_SCENARIOS = [
             "monitoring": BarrierMonitoring.CONTINUOUS,
             "rebate": 1.5,
             "rebate_timing": RebateTiming.AT_EXPIRY,
-            "q_curve": flat_curve(PRICING_DATE, MATURITY, 0.01),
+            "q_curve": DiscountCurve.flat(0.01),
         },
         id="am_down_in_call_continuous",
     ),
@@ -632,8 +631,8 @@ def test_pde_fd_barrier_european_ki_parity_matches_direct(
     exclusive: ``dividend_curve`` for the continuous case,
     ``discrete_dividends`` (with no continuous curve) for the rest.
     """
-    curve_r = DiscountCurve.flat(0.05, 2)
-    curve_q = DiscountCurve.flat(0.03, 2) if discrete_dividends is None else None
+    curve_r = DiscountCurve.flat(0.05)
+    curve_q = DiscountCurve.flat(0.03) if discrete_dividends is None else None
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2025, 12, 31)
 
@@ -745,8 +744,8 @@ def test_pde_fd_barrier_fixing_on_ex_date_sees_ex_dividend_price(option_type, di
 
 def test_pde_fd_barrier_european_ki_rebate_grid_matches_direct_near_spot():
     """Returned KI grids should include the rebate term near the spot node."""
-    curve_r = DiscountCurve.flat(0.05, 2)
-    curve_q = DiscountCurve.flat(0.03, 2)
+    curve_r = DiscountCurve.flat(0.05)
+    curve_q = DiscountCurve.flat(0.03)
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2025, 12, 31)
 
@@ -843,8 +842,8 @@ def test_pde_fd_barrier_european_ki_facade_vs_direct_core_greeks(
     continuous barrier pricing problem via different numerics, so PV and grid
     greeks should match to within grid-refinement error.
     """
-    curve_r = DiscountCurve.flat(0.05, 2)
-    curve_q = DiscountCurve.flat(0.02, 2)
+    curve_r = DiscountCurve.flat(0.05)
+    curve_q = DiscountCurve.flat(0.02)
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2025, 12, 31)
 
@@ -1171,7 +1170,7 @@ def test_knock_out_triggered_at_inception_grid_greeks_match_fixed_expiry_rebate(
 ):
     """PDE KO greeks should match the resolved expiry rebate when already triggered."""
     rate = 0.05
-    md = MarketData(PRICING_DATE, flat_curve(PRICING_DATE, MATURITY, rate), currency="USD")
+    md = MarketData(PRICING_DATE, DiscountCurve.flat(rate), currency="USD")
     ud = underlying(initial_value=120.0, market_data=md)
     params = PDEParams(spot_steps=300, time_steps=300)
     rebate = 5.0
@@ -1205,7 +1204,7 @@ def test_knock_out_triggered_at_inception_grid_greeks_match_fixed_expiry_rebate(
 
 def test_knock_in_triggered_at_inception_grid_greeks_match_vanilla():
     """Triggered-at-inception KI should reduce to vanilla for PDE grid greeks."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
+    q_curve = DiscountCurve.flat(0.02)
     ud = underlying(initial_value=120.0, dividend_curve=q_curve)
     params = PDEParams(spot_steps=400, time_steps=400)
     ki_spec = BarrierSpec(
@@ -1298,8 +1297,8 @@ _AM_VEGA_RHO_DIV = 0.02
 def _build_am_barrier_valuation(
     *, direction, action, option_type, strike, barrier, rebate, rebate_timing, params
 ) -> OptionValuation:
-    r_curve = flat_curve(PRICING_DATE, MATURITY, _AM_VEGA_RHO_RATE)
-    q_curve = flat_curve(PRICING_DATE, MATURITY, _AM_VEGA_RHO_DIV)
+    r_curve = DiscountCurve.flat(_AM_VEGA_RHO_RATE)
+    q_curve = DiscountCurve.flat(_AM_VEGA_RHO_DIV)
     md = market_data(pricing_date=PRICING_DATE, discount_curve=r_curve)
     ud = underlying(
         initial_value=_AM_VEGA_RHO_SPOT,

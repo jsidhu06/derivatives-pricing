@@ -19,7 +19,6 @@ from derivatives_pricing.valuation import (
 )
 
 from helpers import (
-    flat_curve,
     PRICING_DATE,
     MATURITY,
     CURRENCY,
@@ -84,7 +83,7 @@ def discount_curve(
     pricing_date: dt.datetime, maturity: dt.datetime, risk_free_rate: float
 ) -> DiscountCurve:
     """Flat discount curve over [pricing_date, maturity]."""
-    return flat_curve(pricing_date, maturity, risk_free_rate)
+    return DiscountCurve.flat(risk_free_rate)
 
 
 @pytest.fixture()

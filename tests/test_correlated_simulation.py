@@ -5,6 +5,7 @@ import datetime as dt
 import numpy as np
 import pytest
 
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.enums import (
     AsianAveraging,
     BarrierAction,
@@ -33,7 +34,6 @@ from derivatives_pricing.valuation import (
     VanillaSpec,
     contract_event_dates,
 )
-from helpers import flat_curve
 
 PRICING_DATE = dt.datetime(2025, 1, 1)
 MATURITY = dt.datetime(2026, 1, 1)
@@ -43,7 +43,7 @@ PATHS = 20_000
 
 
 def _md() -> MarketData:
-    return MarketData(PRICING_DATE, flat_curve(PRICING_DATE, MATURITY, 0.05), currency="USD")
+    return MarketData(PRICING_DATE, DiscountCurve.flat(0.05), currency="USD")
 
 
 def _context(grid, *, paths: int = PATHS) -> CorrelationContext:

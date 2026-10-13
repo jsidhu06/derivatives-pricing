@@ -12,6 +12,7 @@ import datetime as dt
 import numpy as np
 import pytest
 
+from derivatives_pricing.rates import DiscountCurve
 from derivatives_pricing.enums import ExerciseType, OptionType, PDESpaceGrid, PricingMethod
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
@@ -23,7 +24,7 @@ from derivatives_pricing.valuation import (
     UnderlyingData,
     VanillaSpec,
 )
-from helpers import PRICING_DATE, flat_curve
+from helpers import PRICING_DATE
 
 _STRIKE = 40.0
 _RATE = 0.06
@@ -60,9 +61,7 @@ def _maturity(years: int) -> dt.datetime:
 
 
 def _market(years: int) -> MarketData:
-    return MarketData(
-        PRICING_DATE, flat_curve(PRICING_DATE, _maturity(years), _RATE), currency="USD"
-    )
+    return MarketData(PRICING_DATE, DiscountCurve.flat(_RATE), currency="USD")
 
 
 def _put(years: int, exercise: ExerciseType) -> VanillaSpec:

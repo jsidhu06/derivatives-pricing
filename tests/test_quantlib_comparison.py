@@ -21,7 +21,6 @@ from derivatives_pricing.enums import (
 )
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.rates import DiscountCurve
-from helpers import flat_curve
 from derivatives_pricing.valuation import (
     AsianSpec,
     BarrierSpec,
@@ -66,7 +65,7 @@ def _market_data(
     r_curve: DiscountCurve | None = None,
     dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> MarketData:
-    curve = r_curve if r_curve is not None else flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
+    curve = r_curve if r_curve is not None else DiscountCurve.flat(RISK_FREE)
     return MarketData(PRICING_DATE, curve, currency=CURRENCY, day_count_convention=dcc)
 
 
@@ -505,7 +504,7 @@ def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
 @pytest.mark.parametrize(
     "r_curve",
     [
-        flat_curve(PRICING_DATE, MATURITY, _ME_RATE),
+        DiscountCurve.flat(_ME_RATE),
         _nonflat_r_curve(),
     ],
     ids=["flat", "nonflat"],
@@ -591,8 +590,8 @@ def test_mixed_yield_and_cash_dividends_vs_quantlib(option_type):
         (PRICING_DATE + dt.timedelta(days=90), 2.0),
         (PRICING_DATE + dt.timedelta(days=270), 2.0),
     ]
-    r_curve = flat_curve(PRICING_DATE, MATURITY, _ME_RATE)
-    q_curve = flat_curve(PRICING_DATE, MATURITY, q)
+    r_curve = DiscountCurve.flat(_ME_RATE)
+    q_curve = DiscountCurve.flat(q)
     with pytest.warns(UserWarning, match="both dividend_curve and discrete_dividends"):
         ud = _underlying(
             spot=spot, r_curve=r_curve, dividend_curve=q_curve, discrete_dividends=divs
@@ -655,7 +654,7 @@ def test_mixed_yield_and_cash_dividends_vs_quantlib(option_type):
 @pytest.mark.parametrize(
     "r_curve",
     [
-        flat_curve(PRICING_DATE, MATURITY, _ME_RATE),
+        DiscountCurve.flat(_ME_RATE),
         _nonflat_r_curve(),
     ],
     ids=["flat", "nonflat"],

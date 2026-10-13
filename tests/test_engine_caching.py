@@ -53,7 +53,7 @@ MATURITY = dt.datetime(2026, 1, 1)
 def _underlying() -> UnderlyingData:
     md = MarketData(
         PRICING_DATE,
-        DiscountCurve.flat(0.05, 2.0),
+        DiscountCurve.flat(0.05),
         currency="USD",
         day_count_convention=DayCountConvention.ACT_365F,
     )
@@ -333,7 +333,7 @@ def _mc_gbm_process() -> GBMProcess:
     """Construct a small GBMProcess for Monte Carlo pathwise tests."""
     md = MarketData(
         PRICING_DATE,
-        DiscountCurve.flat(0.05, 2.0),
+        DiscountCurve.flat(0.05),
         currency="USD",
         day_count_convention=DayCountConvention.ACT_365F,
     )
