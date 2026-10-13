@@ -664,6 +664,18 @@ def test_result_reports_pricing_calls_and_well_determined():
     assert result.function_evaluations >= result.iterations + 2
 
 
+def test_quote_at_intrinsic_value_is_not_well_determined():
+    """Regression: a deep in-the-money American put is worth its intrinsic value
+    at every small volatility, so the solve ends near zero vol. The conditioning
+    check then bumped the vol down by 1% for a numerical vega and raised on the
+    negative volatility."""
+    valuation = _american_put(PricingMethod.BINOMIAL, 0.3)  # K = 110, S = 100
+    with pytest.warns(UserWarning, match="is not determined by the price"):
+        result = implied_volatility(10.0, valuation)
+    assert result.implied_vol < 0.01
+    assert not result.well_determined
+
+
 @pytest.mark.filterwarnings("ignore:PDE grid has", "ignore:PDE domain boundary is")
 @pytest.mark.parametrize("engine", [PricingMethod.BINOMIAL, PricingMethod.PDE_FD])
 def test_numerical_engines_default_to_brent(engine):

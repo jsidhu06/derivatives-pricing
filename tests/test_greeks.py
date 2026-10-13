@@ -300,6 +300,19 @@ class TestVegaBasicProperties(TestGreeksSetup):
         vega = valuation.vega(epsilon=0.02, greek_calc_method=GreekCalculationMethod.NUMERICAL)
         assert vega > 0
 
+    def test_numerical_vega_below_its_bump_uses_forward_difference(self):
+        """Regression: at a volatility below the 1% bump the down leg asked for a
+        negative volatility and raised. Struck at the forward, where the price is
+        close to linear in vol, so a forward difference is accurate."""
+        spec = self._make_spec(
+            option_type=OptionType.CALL, strike=self.spot * float(np.exp(self.rate))
+        )
+        valuation = self._make_val(self._make_ud(vol=0.005), spec, PricingMethod.ANALYTICAL)
+
+        numerical = valuation.vega(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+        analytical = valuation.vega(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        assert np.isclose(numerical, analytical, rtol=1e-2)
+
 
 class TestRhoBasicProperties(TestGreeksSetup):
     """Test basic properties of rho values."""
