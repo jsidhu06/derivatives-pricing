@@ -30,6 +30,7 @@ from derivatives_pricing.enums import (
     DayCountConvention,
     OptionType,
     ExerciseType,
+    PDESpaceGrid,
     PricingMethod,
 )
 from derivatives_pricing.utils import calculate_year_fraction
@@ -203,6 +204,25 @@ class TestOptionValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
         assert isinstance(valuation._impl, _BinomialEuropeanValuation)
+
+    def test_default_pde_params_use_log_spot_grid_except_for_custom_payoffs(self):
+        """PDE_FD without params: LOG_SPOT for vanillas, SPOT for PayoffSpec."""
+        ud = UnderlyingData(initial_value=100.0, volatility=0.2, market_data=self.market_data)
+        custom = PayoffSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            maturity=self.maturity,
+            payoff_fn=lambda s: np.maximum(s - 100.0, 0.0),
+            currency="USD",
+        )
+
+        def grid(spec, params=None):
+            valuation = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params)
+            return valuation.params.space_grid
+
+        assert grid(self.call_spec) is PDESpaceGrid.LOG_SPOT
+        assert grid(custom) is PDESpaceGrid.SPOT
+        # Explicit params are kept as passed.
+        assert grid(custom, PDEParams()) is PDESpaceGrid.LOG_SPOT
 
     def test_bsm_accepts_nonflat_discount_curve(self):
         """BSM should accept time-varying discount curves."""

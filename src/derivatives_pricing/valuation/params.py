@@ -230,7 +230,8 @@ class PDEParams:
         Default: ``2``.
     space_grid
         Spatial discretization in spot space or log-spot space.
-        Default: ``PDESpaceGrid.SPOT``.
+        Default: ``PDESpaceGrid.LOG_SPOT``. When no params are passed,
+        ``PayoffSpec`` valuations use ``PDESpaceGrid.SPOT`` instead.
     american_solver
         Early-exercise handling for American options.
         Default: ``PDEEarlyExercise.GAUSS_SEIDEL``.
@@ -252,7 +253,7 @@ class PDEParams:
     max_iter: int = 20_000
     method: PDEMethod = PDEMethod.CRANK_NICOLSON
     rannacher_steps: int = 2
-    space_grid: PDESpaceGrid = PDESpaceGrid.SPOT
+    space_grid: PDESpaceGrid = PDESpaceGrid.LOG_SPOT
     american_solver: PDEEarlyExercise = PDEEarlyExercise.GAUSS_SEIDEL
     control_variate_european: bool = False
     log_timings: bool = False

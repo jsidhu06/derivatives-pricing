@@ -6,12 +6,13 @@ individual price is still within a loose absolute tolerance.
 """
 
 import datetime as dt
+import math
 
 import numpy as np
 import pytest
 
 from derivatives_pricing.rates import DiscountCurve
-from derivatives_pricing.enums import ExerciseType, OptionType, PricingMethod
+from derivatives_pricing.enums import ExerciseType, OptionType, PDESpaceGrid, PricingMethod
 from derivatives_pricing.market_environment import MarketData
 from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
 from derivatives_pricing.valuation import (
@@ -78,19 +79,26 @@ def test_crr_tree_converges_at_first_order(option_type):
 
 
 @pytest.mark.parametrize(
-    "option_type,strike",
+    "space_grid,option_type,strike",
     [
-        (OptionType.CALL, 100.0),
-        (OptionType.PUT, 100.0),
-        (OptionType.PUT, 80.0),
-        (OptionType.CALL, 120.0),
+        (PDESpaceGrid.SPOT, OptionType.CALL, 100.0),
+        (PDESpaceGrid.SPOT, OptionType.PUT, 100.0),
+        (PDESpaceGrid.SPOT, OptionType.PUT, 80.0),
+        (PDESpaceGrid.SPOT, OptionType.CALL, 120.0),
+        (PDESpaceGrid.LOG_SPOT, OptionType.CALL, 100.0),
+        (PDESpaceGrid.LOG_SPOT, OptionType.PUT, 100.0),
+        (PDESpaceGrid.LOG_SPOT, OptionType.PUT, 100.0 / math.sqrt(2.0)),
+        (PDESpaceGrid.LOG_SPOT, OptionType.CALL, 100.0 * math.sqrt(2.0)),
     ],
 )
-def test_crank_nicolson_pde_converges_at_second_order(option_type, strike):
-    """Uniform spot grid on [0, 400] with spot_steps = time_steps = n: the spot
-    and the strike are grid nodes at every n, so the payoff kink adds no
-    oscillating interpolation error and Rannacher-smoothed Crank-Nicolson is
-    O(h^2 + dt^2). With the default fitted domain the strike falls between
+def test_crank_nicolson_pde_converges_at_second_order(space_grid, option_type, strike):
+    """smax_mult = 4 with spot_steps = time_steps = n: the spot and the strike
+    are grid nodes at every n, so the payoff kink adds no oscillating
+    interpolation error and Rannacher-smoothed Crank-Nicolson is
+    O(h^2 + dt^2). The uniform SPOT grid on [0, 400] has nodes at 80 and 120;
+    the LOG_SPOT grid on [25, 400] is centred on ln(100) with ln-spacing
+    ln(16) / n, so 100 / sqrt(2) and 100 * sqrt(2) are nodes whenever n is a
+    multiple of 8. With the default fitted domain the strike falls between
     nodes and the error is second order only on average."""
     exact = _exact(option_type, strike)
     sizes = [200, 400, 800, 1600]
@@ -100,7 +108,7 @@ def test_crank_nicolson_pde_converges_at_second_order(option_type, strike):
                 _UNDERLYING,
                 _spec(option_type, strike),
                 PricingMethod.PDE_FD,
-                params=PDEParams(smax_mult=4.0, spot_steps=n, time_steps=n),
+                params=PDEParams(smax_mult=4.0, spot_steps=n, time_steps=n, space_grid=space_grid),
             ).present_value()
             - exact
         )
