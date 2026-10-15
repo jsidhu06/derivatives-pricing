@@ -37,6 +37,7 @@ from ..enums import (
     DayCountConvention,
     OptionType,
     ExerciseType,
+    PDESpaceGrid,
     PricingMethod,
     RebateTiming,
     GreekCalculationMethod,
@@ -1106,6 +1107,9 @@ class OptionValuation:
             if pricing_method is PricingMethod.PDE_FD:
                 if isinstance(spec, BarrierSpec):
                     return PDEParams.for_barriers(monitoring=spec.monitoring)
+                if isinstance(spec, PayoffSpec):
+                    # Custom payoffs keep the fixed smax_mult span for now.
+                    return PDEParams(space_grid=PDESpaceGrid.SPOT)
                 return PDEParams()
             return None
 

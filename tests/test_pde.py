@@ -973,7 +973,7 @@ def test_european_knock_in_grid_gamma_uses_native_surface_parity():
         market_data=md,
         dividend_curve=q_curve,
     )
-    params = PDEParams(spot_steps=400, time_steps=400)
+    params = PDEParams(spot_steps=400, time_steps=400, space_grid=PDESpaceGrid.SPOT)
 
     ki_spec = BarrierSpec(
         option_type=OptionType.CALL,

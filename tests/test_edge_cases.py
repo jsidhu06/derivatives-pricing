@@ -458,7 +458,12 @@ class TestPDEDomainFitsDistribution:
         ud = _bsm_market(vol=0.8, maturity=maturity)
         spec = _spec(strike=100.0, maturity=maturity)
         with pytest.warns(UserWarning, match="standard deviations of ln"):
-            _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(spot_steps=400, time_steps=400))
+            _pv(
+                ud,
+                spec,
+                PricingMethod.PDE_FD,
+                params=PDEParams(spot_steps=400, time_steps=400, space_grid=PDESpaceGrid.SPOT),
+            )
 
     def test_explicit_smax_mult_is_the_legacy_domain(self):
         """An explicit smax_mult sets the legacy domain exactly; truncation
@@ -495,7 +500,12 @@ class TestPDEDomainFitsDistribution:
         ud = _bsm_market(maturity=maturity)
         spec = _spec(strike=100.0, maturity=maturity)
         with pytest.warns(UserWarning, match="nodes per standard deviation"):
-            legacy = _pv(ud, spec, PricingMethod.PDE_FD, params=PDEParams(smax_mult=4.0))
+            legacy = _pv(
+                ud,
+                spec,
+                PricingMethod.PDE_FD,
+                params=PDEParams(smax_mult=4.0, space_grid=PDESpaceGrid.SPOT),
+            )
         assert np.isclose(legacy, 0.247901, rtol=1e-5)
 
 

@@ -3,12 +3,13 @@
 ## 0.3.0
 
 This release adds Monte Carlo standard errors and implied-volatility
-diagnostics, changes the default PDE grid domain, and refines the handling of
-a number of edge cases: dividend and monitoring dates that coincide, very
-short or very long maturities on the PDE grid, correlated simulation when
-assets have different dates, and curve extrapolation. Prices for standard
-contracts on the analytical and binomial engines are unchanged; PDE prices
-move within discretisation error because of the new default domain.
+diagnostics, changes the default PDE grid and its domain, and refines the
+handling of a number of edge cases: dividend and monitoring dates that
+coincide, very short or very long maturities on the PDE grid, correlated
+simulation when assets have different dates, and curve extrapolation. Prices
+for standard contracts on the analytical and binomial engines are unchanged;
+PDE prices move within discretisation error because of the new default grid
+and domain.
 
 ### API changes
 
@@ -56,6 +57,11 @@ method supports:
   sized from the spot, the forward and `sigma * sqrt(T)`, which keeps the grid
   resolved for very short maturities and wide enough for long-dated,
   high-volatility options. Passing a number keeps the previous fixed span.
+- **PDE grid.** `PDEParams.space_grid` defaults to `PDESpaceGrid.LOG_SPOT`,
+  which gives more accurate Greeks across maturities and volatilities and
+  lets the domain widen for long-dated, high-volatility options. `PayoffSpec`
+  valuations without explicit params keep the `SPOT` grid. Pass
+  `space_grid=PDESpaceGrid.SPOT` for the previous behaviour.
 - **Implied-volatility tolerance.** `tol` is an absolute tolerance on the
   implied volatility for every method. For Newton-Raphson and bisection it was
   previously a price tolerance, which is loose for far out-of-the-money
