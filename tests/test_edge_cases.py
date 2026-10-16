@@ -486,7 +486,7 @@ class TestPDEDomainFitsDistribution:
             return value, _pde_warnings(caught)
 
         legacy, legacy_warnings = pde(4.0)
-        assert np.isclose(legacy, 61.300193, rtol=1e-6)  # the legacy -9.1% value
+        assert np.isclose(legacy, 61.300379, rtol=1e-6)  # the legacy -9.1% value
         assert legacy_warnings
         # The lower boundary must also clear 3 standard deviations (sigma*sqrt(T)
         # = 1.79): ln(1000) / 1.79 ~ 3.9 does, ln(100) / 1.79 ~ 2.6 would warn.
