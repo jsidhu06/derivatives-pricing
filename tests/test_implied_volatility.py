@@ -352,7 +352,7 @@ def test_implied_volatility_low_vol_at_the_forward_is_well_determined(method):
     So a tiny vol is fully determined by the price and must be recovered to tol.
     """
     probe = _build_valuation(option_type=OptionType.CALL, vol=0.2)
-    forward = 100.0 / float(probe.discount_curve.df(probe._maturity_year_fraction()))
+    forward = 100.0 / float(probe.discount_curve.df(probe.maturity_year_fraction()))
     true_vol = 2.0e-3
     target_price = _build_valuation(
         option_type=OptionType.CALL, strike=forward, vol=true_vol

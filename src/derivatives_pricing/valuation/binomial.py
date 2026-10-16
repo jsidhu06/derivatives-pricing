@@ -335,7 +335,7 @@ class _BinomialValuationBase:
                 "Tree Greeks are only available for vanilla binomial options, "
                 "not Asian or other path-dependent specs."
             )
-        T = self.valuation_ctx._maturity_year_fraction()
+        T = self.valuation_ctx.maturity_year_fraction()
         dt = T / num_steps
         return option_lattice, spot_lattice, dt
 
@@ -994,7 +994,7 @@ class _BinomialBarrierValuation(_BinomialValuationBase):
         spot = float(self.underlying.initial_value)
         barrier = float(self.spec.barrier)
         sigma = float(self.underlying.volatility)
-        ttm = self.valuation_ctx._maturity_year_fraction()
+        ttm = self.valuation_ctx.maturity_year_fraction()
         if spot <= 0.0 or barrier <= 0.0 or sigma <= 0.0 or ttm <= 0.0:
             return base_steps
 
@@ -1079,7 +1079,7 @@ class _BinomialBarrierValuation(_BinomialValuationBase):
         _, _, spot_lattice = self._setup_binomial_parameters()
         early_exercise = self.spec.exercise_type is ExerciseType.AMERICAN
         option_lattice = self._tree_greek_option_lattice(early_exercise=early_exercise)
-        T = self.valuation_ctx._maturity_year_fraction()
+        T = self.valuation_ctx.maturity_year_fraction()
         dt = T / num_steps
         return option_lattice, spot_lattice, dt
 
@@ -1305,7 +1305,7 @@ class _BinomialBarrierValuation(_BinomialValuationBase):
                 return 0.0
             if self.spec.rebate_timing is RebateTiming.AT_HIT:
                 return float(self.spec.rebate)
-            ttm = self.valuation_ctx._maturity_year_fraction()
+            ttm = self.valuation_ctx.maturity_year_fraction()
             return float(self.spec.rebate) * float(self.valuation_ctx.discount_curve.df(ttm))
 
         label = (

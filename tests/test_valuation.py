@@ -1201,6 +1201,21 @@ class TestDayCountConventionMonotonicity:
             f"({method.name} {exercise_type.value} {option_type.value})"
         )
 
+    @pytest.mark.parametrize(
+        ("dcc", "expected"),
+        [(DayCountConvention.ACT_365F, 1.0), (DayCountConvention.ACT_360, 365.0 / 360.0)],
+    )
+    def test_maturity_year_fraction_follows_day_count(self, dcc, expected):
+        spec = VanillaSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+        )
+        ov = OptionValuation(self._ud(dcc), spec, PricingMethod.ANALYTICAL)
+        assert ov.maturity_year_fraction() == pytest.approx(expected, rel=1e-12)
+
 
 class TestAsUnderlyingData:
     """Tests for the as_underlying_data conversion function."""

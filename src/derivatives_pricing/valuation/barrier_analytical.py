@@ -495,7 +495,7 @@ class _AnalyticalBarrierValuation:
         S = float(underlying.initial_value)
         sigma = float(underlying.volatility)
         sigma2 = sigma**2
-        T = ctx._maturity_year_fraction()
+        T = ctx.maturity_year_fraction()
 
         df_r = float(ctx.discount_curve.df(T))
         r = -np.log(df_r) / T
@@ -521,7 +521,7 @@ class _AnalyticalBarrierValuation:
         H = float(spec.barrier)
         sigma = float(underlying.volatility)
 
-        T = self.valuation_ctx._maturity_year_fraction()
+        T = self.valuation_ctx.maturity_year_fraction()
 
         # Discount factors from curves
         df_r = float(ctx.discount_curve.df(T))
