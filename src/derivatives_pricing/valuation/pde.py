@@ -1978,8 +1978,6 @@ def _build_ko_continuous_log_grid(
     *,
     smin_target: float,
     smax_target: float,
-    ref_price: float,
-    smax_mult: float,
     direction: BarrierDirection,
     volatility: float,
     time_to_maturity: float,
@@ -2112,8 +2110,6 @@ def _fd_barrier_ko_core(
             grid, S, dz = _build_ko_continuous_log_grid(
                 smin_target=smin_target,
                 smax_target=smax_target,
-                ref_price=ref_price,
-                smax_mult=smax_mult,
                 direction=direction,
                 volatility=volatility,
                 time_to_maturity=time_to_maturity,
@@ -2484,7 +2480,8 @@ def _fd_barrier_ki_core(
     direction: BarrierDirection,
     monitoring: BarrierMonitoring,
     rebate: float,
-    rebate_timing: RebateTiming,  # unused for KI but kept for signature consistency with KO core
+    # Unused for KI; accepted because both cores are called with the same solve_args.
+    rebate_timing: RebateTiming,  # pylint: disable=unused-argument
     monitoring_taus: list[float] | None,
     smax_mult: float,
     spot_steps: int,
