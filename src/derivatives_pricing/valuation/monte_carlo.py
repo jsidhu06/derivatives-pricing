@@ -407,7 +407,7 @@ class _MCEuropeanValuation(_MCValuationBase):
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        ttm = self.valuation_ctx._maturity_year_fraction()
+        ttm = self.valuation_ctx.maturity_year_fraction()
         discount_factor = float(self.valuation_ctx.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
@@ -432,7 +432,7 @@ class _MCEuropeanValuation(_MCValuationBase):
             day_count_convention=self.underlying.day_count_convention,
         )
         ST: np.ndarray = paths[idx]
-        ttm = self.valuation_ctx._maturity_year_fraction()
+        ttm = self.valuation_ctx.maturity_year_fraction()
         df = float(self.valuation_ctx.discount_curve.df(ttm))
         return ST, idx, ttm, df
 
@@ -887,7 +887,7 @@ class _MCAsianEuropeanValuation(_MCAsianBase):
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        ttm = self.valuation_ctx._maturity_year_fraction()
+        ttm = self.valuation_ctx.maturity_year_fraction()
         discount_factor = float(self.valuation_ctx.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
@@ -1452,7 +1452,7 @@ class _MCBarrierEuropeanValuation(_MCBarrierBase):
             day_count_convention=self.underlying.day_count_convention,
         )
 
-        ttm = self.valuation_ctx._maturity_year_fraction()
+        ttm = self.valuation_ctx.maturity_year_fraction()
         K = self.valuation_ctx.strike
         H = float(self.spec.barrier)
         direction = self.spec.direction

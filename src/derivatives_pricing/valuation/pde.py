@@ -1815,7 +1815,7 @@ class _FDValuationBase(_FDGridGreeksMixin):
         spot = float(self.underlying.initial_value)
         strike = self.valuation_ctx.strike
         if params.smax_mult is None and not isinstance(self.valuation_ctx.spec, PayoffSpec):
-            time_to_maturity = float(self.valuation_ctx._maturity_year_fraction())
+            time_to_maturity = float(self.valuation_ctx.maturity_year_fraction())
             return _fitted_vanilla_domain(
                 spot=spot,
                 strike=float(strike),
@@ -1871,7 +1871,7 @@ class _FDValuationBase(_FDGridGreeksMixin):
         dividend_curve = self.underlying.dividend_curve
         discrete_dividends = self.underlying.discrete_dividends
 
-        time_to_maturity = self.valuation_ctx._maturity_year_fraction()
+        time_to_maturity = self.valuation_ctx.maturity_year_fraction()
 
         dividend_schedule = _dividend_tau_schedule(
             discrete_dividends=discrete_dividends,
@@ -2943,7 +2943,7 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         if self._spec.rebate_timing is RebateTiming.AT_HIT:
             return float(self._spec.rebate)
 
-        ttm = self.valuation_ctx._maturity_year_fraction()
+        ttm = self.valuation_ctx.maturity_year_fraction()
         return float(self._spec.rebate) * float(self.valuation_ctx.discount_curve.df(ttm))
 
     def _last_dtau(self) -> float:
@@ -2970,7 +2970,7 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         ):
             return 0.0
 
-        ttm = self.valuation_ctx._maturity_year_fraction()
+        ttm = self.valuation_ctx.maturity_year_fraction()
         discount_curve = self.valuation_ctx.discount_curve
         current_value = float(self._spec.rebate) * float(discount_curve.df(ttm))
         previous_value = float(self._spec.rebate) * float(
@@ -3022,7 +3022,7 @@ class _FDBarrierValuation(_FDGridGreeksMixin):
         ctx = self.valuation_ctx
         early_exercise = spec.exercise_type is ExerciseType.AMERICAN
 
-        time_to_maturity = ctx._maturity_year_fraction()
+        time_to_maturity = ctx.maturity_year_fraction()
 
         dividend_schedule = _dividend_tau_schedule(
             discrete_dividends=self.underlying.discrete_dividends,

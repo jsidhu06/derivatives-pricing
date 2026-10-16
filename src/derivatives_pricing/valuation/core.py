@@ -819,7 +819,7 @@ class OptionValuation:
         def _ko_theta_at_expiry(spec: BarrierSpec) -> float:
             # Per-day θ of the AT_EXPIRY rebate cashflow R·df_r(T):
             # the discount factor unwinds at rate r, so θ = r·pv/365.
-            T = self._maturity_year_fraction()
+            T = self.maturity_year_fraction()
             df_r = float(self.discount_curve.df(T))
             pv = float(spec.rebate) * df_r
             r = -np.log(df_r) / T
@@ -918,7 +918,7 @@ class OptionValuation:
             # via a parallel zero-rate bump on the discount curve.  Scaled
             # by 0.01 to express per-1%-rate-move (consistent with engine ρ).
             eps_r = 0.01 if rate_bump is None else rate_bump
-            T = self._maturity_year_fraction()
+            T = self.maturity_year_fraction()
             df_up = float(self.discount_curve.bump_parallel_zero_rate(eps_r / 2).df(T))
             df_dn = float(self.discount_curve.bump_parallel_zero_rate(-eps_r / 2).df(T))
             return float(spec.rebate) * (df_up - df_dn) / eps_r * 0.01
@@ -1018,6 +1018,20 @@ class OptionValuation:
         """Day-count basis used for date-to-year-fraction conversions."""
         return self._underlying.day_count_convention
 
+    def maturity_year_fraction(self) -> float:
+        """Time from the pricing date to maturity, in years.
+
+        Measured under the market data's ``day_count_convention``; this is the
+        maturity every engine prices with.
+        """
+        return float(
+            calculate_year_fraction(
+                self.pricing_date,
+                self.maturity,
+                day_count_convention=self.day_count_convention,
+            )
+        )
+
     def __repr__(self) -> str:
         spec_type = type(self._spec).__name__
         strike = f", K={self.strike}" if self.strike is not None else ""
@@ -1033,16 +1047,6 @@ class OptionValuation:
     # ──────────────────────────────
     # Private API (helpers)
     # ──────────────────────────────
-    def _maturity_year_fraction(self) -> float:
-        """Time to maturity in years under the valuation day-count convention."""
-        return float(
-            calculate_year_fraction(
-                self.pricing_date,
-                self.maturity,
-                day_count_convention=self.day_count_convention,
-            )
-        )
-
     @staticmethod
     def _fmt_dt(d: dt.datetime) -> str:
         """Format datetime as date-only when midnight, otherwise ISO."""
