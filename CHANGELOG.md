@@ -44,6 +44,8 @@ method supports:
   money, or at intrinsic value).
 - `shared_time_grid(...)` and `contract_event_dates(...)` for building one
   time grid across correlated assets and contracts.
+- `OptionValuation.maturity_year_fraction()`: the time to maturity in years
+  under the market data's day-count convention, as every engine prices it.
 - Warnings when projected SOR does not converge, when a PDE boundary is
   within 3 standard deviations of the spot or forward, and when the grid has
   fewer than 3 nodes per standard deviation.

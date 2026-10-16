@@ -190,7 +190,7 @@ class TestBinomialValuation:
 
         _, inactive = engine._solve_knock_in(early_exercise=False)
         _, _, spot_lattice = engine._setup_binomial_parameters()
-        T = valuation._maturity_year_fraction()
+        T = valuation.maturity_year_fraction()
         dt = T / engine._effective_num_steps()
 
         expected_delta = (inactive[0, 1] - inactive[1, 1]) / (
@@ -236,7 +236,7 @@ class TestBinomialValuation:
 
         vanilla_lattice = engine._solve_backward(early_exercise=False)
         _, _, spot_lattice = engine._setup_binomial_parameters()
-        T = valuation._maturity_year_fraction()
+        T = valuation.maturity_year_fraction()
         dt = T / engine._effective_num_steps()
 
         expected_delta = (vanilla_lattice[0, 1] - vanilla_lattice[1, 1]) / (
