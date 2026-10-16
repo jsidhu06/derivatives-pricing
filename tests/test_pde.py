@@ -105,6 +105,27 @@ def test_pde_fd_numerical_greeks_reuse_base_grid_domain(space_grid):
     assert np.isclose(pde.rho(), bsm.rho(), rtol=1e-3)
 
 
+@pytest.mark.parametrize("vol,years", [(0.8, 10), (2.0, 5), (5.0, 5)])
+def test_log_grid_calls_keep_put_call_parity_at_large_sigma_sqrt_t(vol, years):
+    """The log-grid diffusion weight is fitted so the stencil carries V = S exactly.
+
+    Regression: unfitted, the call's forward part drifted by ~1.5e-4
+    (sigma sqrt(T))^4 in the exponent: a parity gap of -0.66 at 80% vol over
+    10 years, and a 5-year call at 500% vol priced at 9.05.
+    """
+    md = market_data(pricing_date=PRICING_DATE, discount_curve=DiscountCurve.flat(0.03))
+    ud = underlying(volatility=vol, market_data=md, dividend_curve=DiscountCurve.flat(0.01))
+    maturity = PRICING_DATE + dt.timedelta(days=365 * years)
+    call = spec(strike=70.0, option_type=OptionType.CALL, maturity=maturity)
+    put = spec(strike=70.0, option_type=OptionType.PUT, maturity=maturity)
+    c = OptionValuation(ud, call, PricingMethod.PDE_FD).present_value()
+    p = OptionValuation(ud, put, PricingMethod.PDE_FD).present_value()
+    forward_leg = 100.0 * np.exp(-0.01 * years) - 70.0 * np.exp(-0.03 * years)
+    assert abs((c - p) - forward_leg) < 2e-4  # measured <= 8e-5 (time stepping)
+    bsm = OptionValuation(ud, call, PricingMethod.BSM).present_value()
+    assert np.isclose(c, bsm, rtol=1e-3)
+
+
 def test_pde_fd_grid_method_equivalence_american():
     """PDE FD American variants should be in the same neighborhood."""
     q_curve = DiscountCurve.flat(0.0)

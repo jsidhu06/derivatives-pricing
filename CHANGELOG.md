@@ -102,6 +102,13 @@ method supports:
   the tree's per-step forward rates.
 - **Implied-volatility results that did not converge** are no longer reported
   as well determined.
+- **Calls on the log-spot grid at high volatility and long maturities.** The
+  log-grid stencil did not carry the linear part of a call's value exactly,
+  so call prices drifted from put-call parity as volatility times the square
+  root of maturity grew: 0.8% low at 80% volatility over 10 years, and a
+  5-year call at 500% volatility priced at 9.05 instead of 95.12. Implied
+  volatility on the PDE engine could then return a spurious high root. The
+  diffusion weight is now fitted so the grid reproduces V = S exactly.
 
 ### Documentation
 

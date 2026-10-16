@@ -687,6 +687,30 @@ def test_numerical_engines_default_to_brent(engine):
     assert default.function_evaluations < newton.function_evaluations
 
 
+@pytest.mark.parametrize("years", [5, 10])
+def test_pde_implied_vol_round_trips_long_dated_european_calls(years):
+    """Regression: the bracket evaluates the upper vol bound (5). Before the
+    log-grid diffusion weight was fitted, the 5-year call priced at 9.05 there
+    (BSM 95.12), below the target, so the solver widened upwards and returned
+    a spurious 17.86, flagged well determined."""
+    md = MarketData(PRICING_DATE, DiscountCurve.flat(0.03), currency="USD")
+    sp = VanillaSpec(
+        option_type=OptionType.CALL,
+        exercise_type=ExerciseType.EUROPEAN,
+        strike=100.0,
+        maturity=PRICING_DATE + dt.timedelta(days=365 * years),
+        currency="USD",
+    )
+
+    def valuation(vol):
+        ud = underlying(volatility=vol, market_data=md, dividend_curve=DiscountCurve.flat(0.01))
+        return OptionValuation(ud, sp, PricingMethod.PDE_FD)
+
+    result = implied_volatility(valuation(0.3).present_value(), valuation(0.2))
+    assert result.well_determined
+    assert np.isclose(result.implied_vol, 0.3, atol=1.0e-6)
+
+
 def test_root_on_a_bracket_end_returns_without_solving():
     valuation = _build_valuation(option_type=OptionType.CALL, vol=0.2)
     target = _build_valuation(option_type=OptionType.CALL, vol=0.4).present_value()

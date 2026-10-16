@@ -766,9 +766,27 @@ def _log_operator_coeffs(
 
     When *implicit_discounting* is True (Hull's explicit scheme), r is
     excluded from beta.
+
+    The diffusion weight is fitted so the stencil is exact on f = 1 and
+    f = e^z = S: central differences applied to f(z) = e^z return
+    e^z (a c + mu s) instead of e^z (a + mu), with c = 2 (cosh dz - 1) / dz^2
+    and s = sinh(dz) / dz. The stencil is then exact on every A + B S, so the
+    linear part of an option's value (its large-S asymptote, the forward leg
+    of a call) is carried exactly and put-call parity holds on the grid. The
+    change is O(dz^2), so the scheme stays second order; unfitted, the error
+    grows like (sigma sqrt(T))^4 on the auto domain and destroys call prices
+    at large sigma sqrt(T).
     """
-    mu = risk_free_rate - dividend_rate - 0.5 * volatility**2
-    diffusion = (volatility**2) / (dz**2)
+    a = 0.5 * volatility**2
+    mu = risk_free_rate - dividend_rate - a
+    half_sinh = np.sinh(0.5 * dz) / (0.5 * dz)
+    c = half_sinh * half_sinh
+    s = np.sinh(dz) / dz
+    fitted = (a + mu * (1.0 - s)) / c
+    # Positive unless high carry meets very low volatility on a coarse grid;
+    # fall back to the unfitted weight there.
+    a_dz = fitted if fitted > 0.0 else a
+    diffusion = 2.0 * a_dz / dz**2
     drift = mu / dz
     gamma = np.full(size, 0.5 * (diffusion - drift))
     beta = np.full(size, -diffusion if implicit_discounting else -(diffusion + risk_free_rate))
